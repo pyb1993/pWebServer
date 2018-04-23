@@ -1,0 +1,6 @@
+pWebServer.*
+Debug/
+prog.*
+*.xcodeproj
+.DS_Store
+resource.h
