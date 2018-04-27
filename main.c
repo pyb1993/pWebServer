@@ -172,8 +172,8 @@ int main(int argc, const char * argv[])
     if(server_cfg.daemon){
      //  daemon(1,0);
     }
-    //test();
-    //exit(0);
+    test();
+    exit(0);
     
     signal_init();
     plog("master %d run\n",getpid());

@@ -16,6 +16,8 @@
 #include "string_t.h"
 #include "http.h"
 #include "header.h"
+#include "rb_tree.h"
+#include "timer_event.h"
 void testVector()
 {
     vector v;
@@ -159,7 +161,7 @@ void testHash()
     
     /* 查找hash 元素 */
     for(int i = 0; i< 3;++i){
-    int k    = hash_key_function(names[i].c, names[i].len);
+    int k  = hash_key_function(names[i].c, names[i].len);
     char* find = (char*) hash_find(h, names[i].c, names[i].len);
     test_int(0, strcmp(descs[i], find));
     }
@@ -247,6 +249,115 @@ static void testHeaderParse(){
     test_header_parse("cookie:aaa\r\ndate:123456hhhh\r\n","cookie","aaa",b);
 }
 
+static rbtree_node_t* create_node(rbtree_key_t key){
+    rbtree_node_t* node = (rbtree_node_t*)(malloc(sizeof(rbtree_node_t)));
+    node->key = key;
+    return node;
+}
+
+static void BinTreeInsert(rbtree_key_t arr[],int len){
+#define insert_node(node) rbtree_insert_timer_value(event_timer_rbtree.root,node, &event_timer_sentinel)
+    for(int i = 0; i < len;i++){
+        rbtree_node_t* node = create_node(arr[i]);
+        insert_node(node);
+    }
+#undef insert_node
+}
+
+
+static void testBinTreeInsert()
+{
+    rbtree_init(&event_timer_rbtree, &event_timer_sentinel,
+                    rbtree_insert_timer_value);
+    
+    rbtree_key_t arr[] = {100,200,300,250,10,1,199,99};
+    BinTreeInsert(arr,sizeof(arr) / sizeof(rbtree_key_t));
+    rbtree_node_t* root = event_timer_rbtree.root->right;
+    test_int(100,root->key);
+    test_int(200,root->right->key);
+    test_int(300,root->right->right->key);
+    test_int(250,root->right->right->left->key);
+    test_int(10,root->left->key);
+    test_int(1,root->left->left->key);
+    test_int(199,root->right->left->key);
+    test_int(99,root->left->right->key);
+    event_timer_rbtree.sentinel->parent = event_timer_rbtree.sentinel;
+    event_timer_rbtree.sentinel->left = event_timer_rbtree.sentinel;
+    event_timer_rbtree.sentinel->right = event_timer_rbtree.sentinel;
+}
+
+
+static void RbTreeInsert(rbtree_key_t arr[],int len){
+#define insert_node(node) rbtree_insert(&event_timer_rbtree,node)
+    for(int i = 0; i < len;i++){
+        rbtree_node_t* node = create_node(arr[i]);
+        insert_node(node);
+    }
+#undef insert_node
+}
+
+static void testRbTreeInsert()
+{
+    #define test_red(node) test_int(1,node->color)
+    #define test_black(node) test_int(0,node->color)
+    
+    rbtree_init(&event_timer_rbtree, &event_timer_sentinel,
+                rbtree_insert_timer_value);
+    rbtree_key_t arr[] = {12,1,9,2,0,11,7,19};
+    RbTreeInsert(arr,sizeof(arr) / sizeof(rbtree_key_t));
+    rbtree_node_t* root = event_timer_rbtree.root;
+    test_int(9,root->key);
+    test_black(root);
+    test_int(1,root->left->key);
+    test_red(root->left);
+    test_int(12,root->right->key);
+    test_black(root->right);
+
+    test_black(root->right);
+    test_int(0,root->left->left->key);
+    
+    test_black(root->left->right);
+    test_int(2,root->left->right->key);
+    
+    test_red(root->right->left);
+    test_int(11,root->right->left->key);
+    
+    test_red(root->left->right->right);
+    test_int(7,root->left->right->right->key);
+    
+    test_red(root->right->right);
+    test_int(19,root->right->right->key);
+}
+
+/*测试二叉树删除的算法*/
+static void testBinTreeDelete(){
+    rbtree_init(&event_timer_rbtree, &event_timer_sentinel,rbtree_insert_timer_value);
+    rbtree_key_t arr[] = {5,1,7,4,8,6,19,9};
+    rbtree_node_t* nodes[10];
+    int len = sizeof(arr) / sizeof(rbtree_key_t);
+    
+#define insert_node(node) rbtree_insert_timer_value(event_timer_rbtree.root,node, &event_timer_sentinel)
+    for(int i = 0; i < len;i++){
+        rbtree_node_t* node = create_node(arr[i]);
+        nodes[i] = node;
+        insert_node(node);
+    }
+#undef insert_node
+    rbtree_node_t* node = nodes[2];
+    rbtree_delete_value(&event_timer_rbtree,node);
+    rbtree_node_t* root = event_timer_rbtree.root->right;
+    test_int(5,root->key);
+    test_int(8,root->right->key);
+    test_int(6,root->right->left->key);
+    test_int(4,root->left->right->key);
+    test_int(root->right->right->left->key == 9,1);
+    test_int(root->right->right->right == event_timer_rbtree.sentinel,1);
+    rbtree_delete_value(&event_timer_rbtree,nodes[2]);
+    test_int(9,root->right->key);
+    test_int(root->right->right->left == event_timer_rbtree.sentinel,1);
+
+}
+
 void test()
 {
     config_load();
@@ -258,4 +369,7 @@ void test()
     testParseRequestLine();
     testHeaderInit();
     testHeaderParse();
+    testBinTreeInsert();
+    testRbTreeInsert();//
+    testBinTreeDelete();
 }
