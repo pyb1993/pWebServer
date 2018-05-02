@@ -1,5 +1,4 @@
 //
-//  rb_tree.h
 //  pWebServer
 //
 //  Created by pyb on 2018/4/26.
@@ -57,10 +56,11 @@ typedef struct rbtree_s{
 #define is_right(node)(!is_left(node))
 #define father(node)((node)->parent)
 #define grand_father(node)((node)->parent->parent)
-void rbtree_insert_timer_value(rbtree_node_t *temp, rbtree_node_t *node,
-                          rbtree_node_t *sentinel);
+void rbtree_insert_timer_value(rbtree_node_t *temp, rbtree_node_t *node,rbtree_node_t *sentinel);
+void rbtree_insert(rbtree_t* tree,rbtree_node_t * node);
 void rbtree_delete(rbtree_t* tree,rbtree_node_t* node);
 void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* node);
+rbtree_node_t* rbtree_min(rbtree_node_t *node, rbtree_node_t *sentinel);
 
 
 #endif /* rb_tree_h */

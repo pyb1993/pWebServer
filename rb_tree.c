@@ -251,10 +251,11 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
         if (is_left(temp)) {
             w = temp->parent->right;/* w为temp的兄弟节点 */
             
-            /* case A：temp兄弟节点为「红色」,目的是将w变成黑色,这样就进入了下面的3个状态 */
+            /* case A：temp兄弟节点为红色 */
+            /*目的: 将叔叔节点变成黑色*/
             /* 解决办法：
              * 1、改变w节点及temp父亲节点的颜色；
-             * 2、对temp父亲做一次左旋转，此时，temp的兄弟节点是旋转之前w的某个子节点，该子节点颜色为黑色；
+             * 2、对temp父亲节的做一次左旋转，此时，temp的兄弟节点是旋转之前w的某个子节点，该子节点颜色为黑色；
              * 3、此时，case A已经转换为case B、case C 或 case D；
              */
             if (rbt_is_red(w)) {
@@ -271,7 +272,7 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
              * 3 把temp的父亲节点作为新的temp节点；
              */
             if (rbt_is_black(w->left) && rbt_is_black(w->right)) {
-                ngx_rbt_red(w);
+                rbt_red(w);
                 temp = temp->parent;
             }else{
                 /* case C：temp的兄弟节点w是黑色，且w的左孩子是红色，右孩子是黑色 */
@@ -298,6 +299,35 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
                 rbt_black(temp->parent);
                 rbt_black(w->right);
                 rbtree_left_rotate(root, temp->parent, sentinel);
+                temp = *root;
+            }
+        }else{
+        // 针对temp是父亲右孩子的情况
+            w = temp->parent->left;
+            
+            if (rbt_is_red(w)) {
+                rbt_black(w);
+                rbt_red(temp->parent);
+                rbtree_right_rotate(root, sentinel, temp->parent);
+                w = temp->parent->left;
+            }
+            
+            if (rbt_is_black(w->left) && rbt_is_black(w->right)) {
+                rbt_red(w);
+                temp = temp->parent;
+                
+            } else {
+                if (rbt_is_black(w->left)) {
+                    rbt_black(w->right);
+                    rbt_red(w);
+                    rbtree_left_rotate(root, w,sentinel);
+                    w = temp->parent->left;
+                }
+                
+                rbt_copy_color(w, temp->parent);
+                rbt_black(temp->parent);
+                rbt_black(w->left);
+                rbtree_right_rotate(root, temp->parent,sentinel);
                 temp = *root;
             }
         }
@@ -346,6 +376,7 @@ void rbtree_delete(rbtree_t* tree,rbtree_node_t* node)
             if (subst == subst->parent->left) {subst->parent->left = temp;}
             else {subst->parent->right = temp;}
             temp->parent = subst->parent;
+            break;
         }else{
             /*case3,复制后继节点,然后递归的删除subst*/
             node->key = subst->key;

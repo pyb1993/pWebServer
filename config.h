@@ -21,6 +21,8 @@ typedef struct config{
     int max_connections;
     int request_pool_size;
     int connection_pool_size;
+    uint32_t timer_resolution;
+    int post_accept_timeout;// 接受到请求后,可以保持多久链接
     vector workers;
 } config;
 

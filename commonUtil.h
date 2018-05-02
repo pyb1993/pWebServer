@@ -10,6 +10,7 @@
 #define commonUtil_h
 
 #include <stdio.h>
-inline int max(int x, int y);
+int max(int x, int y);
+int p_abs(int x);
 void plog(const char* format, ...);
 #endif /* commonUtil_h */

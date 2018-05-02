@@ -15,6 +15,7 @@
 #include "kqueue_event_module.h"
 #include "commonUtil.h"
 #include "connection.h"
+#include "worker.h"
 
 #define ADD_EVENT 0
 #define DEL_EVENT 1
@@ -83,18 +84,32 @@ int kqueue_del_event (event_t *ev, int event, uint flags)
 
 
 // 进行事件循环并且处理
-void kqueue_process_events(){
+void kqueue_process_events(msec_t timer){
     struct kevent events[MAX_EVENT_NUM];
-
-    while(1){
-        int n = kevent(kq, NULL, 0, events, MAX_EVENT_NUM, NULL);
+    struct timespec kq_timeout;
+    int n;
+    
+    // 根据传入的timer来设定超时
+    if(timer == 0){
+        n = kevent(kq, NULL, 0, events, MAX_EVENT_NUM, NULL);
+    }else{
+        kq_timeout.tv_nsec = timer * 1000000;
+        n = kevent(kq, NULL, 0, events, MAX_EVENT_NUM, &kq_timeout);
+    }
+    
+        /* 更新时间，将时间缓存到一组全局变量中，方便程序高效获取事件 */
+        time_update();
         if(n == -1){
-            if(errno != EINTR)
-            {
+            if(errno != EINTR){
+                if (p_event_timer_alarm) {
+                    // 如果是被时间更新的信号打断,那么直接返回
+                    p_event_timer_alarm = 0;
+                    return;
+                }
                 plog("error on kevent loop %d",errno);
             }
-            continue;
         }
+    
         for(int i = 0; i < n; ++i){
             struct kevent event = events[i];
             if(event.filter == EVFILT_READ){
@@ -113,7 +128,14 @@ void kqueue_process_events(){
                 }
             }
         }
-    }
+}
+
+// 单独用来处理属于kqueue的部分
+int kqueue_process_init()
+{
+    event_actions = ((event_module_t*)kqueue_module.ctx)->actions;
+    event_actions.event_init();// 初始化kqueue事件相关
+    return OK;
 }
 
 
@@ -134,6 +156,6 @@ event_module_t kqueue_module_ctx = {
 module_t kqueue_module = {
     STRING("kqueue module"),
     &kqueue_module_ctx,
-    NULL,
+    &kqueue_process_init,
     NULL
 };

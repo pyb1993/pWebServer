@@ -32,8 +32,7 @@ void http_init_connection(connection_t* c)
     c->wev->handler = NULL;
     
     //将读事件插入到红黑树中，用于管理超时事件，post_accept_timeout超时事件
-    //为nginx.conf中的client_header_timeout选项
-    //ngx_add_timer(rev, c->listening->post_accept_timeout);
+    event_add_timer(rev, server_cfg.post_accept_timeout);
     
     //将读事件注册到epoll中，此时并没有把写事件注册到epoll中，因为现在还不需要向客户端发送任何数据，所以写事件并不需要注册
     if (add_event(rev, READ_EVENT, 0) == ERROR)

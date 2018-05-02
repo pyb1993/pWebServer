@@ -7,6 +7,10 @@
 //
 
 #include "worker.h"
+#include "header.h"
+#include "commonUtil.h"
+#include "unistd.h"
+#include <sys/time.h>
 int p_reap = 0;
 int p_exit = 0;
 int p_terminate = 0;
@@ -14,6 +18,8 @@ int p_exiting = 0;
 int p_sigalarm = 0;
 int p_quit = 0;
 long delay = 0;
+int p_event_timer_alarm = 0;//是否收到相应的信号
+
 
 //向所有的worker发送信号
 void signal_worker_processes(vector* workers,int signo){
@@ -97,8 +103,25 @@ void worker_cycle_process()
 
 // 在worker启动的时候进行初始化
 void worker_process_init(){
-    event_module.processInit();
+    event_module.process_init();
     header_map_init();
     plog("worker process init end");
+}
+
+// 利用时间数组来更新缓存时间
+// 由于这里暂时没有缓存完整的时间,而是仅仅缓存了一个current_msec,所以这个修改操作是原子的,读取也是原子的
+// 同时没有考虑多线程,这里信号中断也不会导致中断函数里面改写时间
+void time_update()
+{
+    struct timeval   tv;
+    time_t sec;
+    uint32_t msec;
+    gettimeofday(&tv,NULL); //宏定义，获取时间
+    
+    sec = tv.tv_sec;
+    msec = tv.tv_usec / 1000;   //从微秒usec中计算毫秒msec
+    
+    current_msec = (msec_t) sec * 1000 + msec;
+    plog("update timer");
 }
 

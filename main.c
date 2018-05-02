@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#include <unistd.h>
 #include "unitTest.h"
 #include "globals.h"
 #include "server.h"
@@ -154,26 +153,25 @@ void signal_init()
         sigemptyset(&sa.sa_mask);//除了信号本身,在信号处理函数中不屏蔽任何其他信号
         if(sigaction(sig->signo, &sa, NULL) == -1){
             plog("set signal handler failed!");
-            };
+        }
     }
 }
 
 void process_events_and_timer()
 {
-    event_process();
-    sleep(1);
+    event_process(0);//传0代表设置了时间精度,依靠定时信号来设置
+    plog("current msec :%d",current_msec);
     // process timers
 }
 
 int main(int argc, const char * argv[])
 {
-
     config_load();
     if(server_cfg.daemon){
      //  daemon(1,0);
     }
-    test();
-    exit(0);
+    //test();
+    //exit(0);
     
     signal_init();
     plog("master %d run\n",getpid());

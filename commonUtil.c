@@ -12,11 +12,15 @@
 #include <math.h>
 
 int max(int x, int y) {
-    return x > y ? x: y;
+    return x > y ? x : y;
 }
 
 int min(int x,int y){
     return x < y ? x : y;
+}
+
+int p_abs(int x){
+    return x < 0 ? -x : x;
 }
 
 void plog(const char* format, ...) {

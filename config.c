@@ -21,7 +21,9 @@ int config_load(){
     server_cfg.max_connections = 1000;
     server_cfg.request_pool_size = 1024;
     server_cfg.connection_pool_size = 1024 * 3;
+    server_cfg.post_accept_timeout = 500;// 500 ms
     server_cfg.root_fd = open("/Users/pyb/Documents/workspace/pWenServer/pWenServer", O_RDONLY);
+    server_cfg.timer_resolution = 500;
     vectorInit(&server_cfg.workers,server_cfg.worker_num,sizeof(struct worker_t));
     return OK;
 }

@@ -17,7 +17,8 @@
 #include "http.h"
 #include "header.h"
 #include "rb_tree.h"
-#include "timer_event.h"
+#include "event.h"
+
 void testVector()
 {
     vector v;
@@ -296,6 +297,19 @@ static void RbTreeInsert(rbtree_key_t arr[],int len){
 #undef insert_node
 }
 
+static void test_key_color(rbtree_node_t* node, int key,int color){
+    test_int(key,node->key);
+    test_int(color, node->color);
+}
+
+static void test_key_red(rbtree_node_t* node, int key){
+    test_key_color(node, key, 1);
+}
+static void test_key_black(rbtree_node_t* node, int key){
+    test_key_color(node, key, 0);
+}
+
+/*检验红黑树插入算法的正确性,网上找的例子*/
 static void testRbTreeInsert()
 {
     #define test_red(node) test_int(1,node->color)
@@ -306,27 +320,16 @@ static void testRbTreeInsert()
     rbtree_key_t arr[] = {12,1,9,2,0,11,7,19};
     RbTreeInsert(arr,sizeof(arr) / sizeof(rbtree_key_t));
     rbtree_node_t* root = event_timer_rbtree.root;
-    test_int(9,root->key);
-    test_black(root);
-    test_int(1,root->left->key);
-    test_red(root->left);
-    test_int(12,root->right->key);
-    test_black(root->right);
-
+    test_key_black(root, 9);
+    test_key_red(root->left, 1);
+    test_key_black(root->right, 12);
     test_black(root->right);
     test_int(0,root->left->left->key);
-    
-    test_black(root->left->right);
-    test_int(2,root->left->right->key);
-    
-    test_red(root->right->left);
-    test_int(11,root->right->left->key);
-    
-    test_red(root->left->right->right);
-    test_int(7,root->left->right->right->key);
-    
-    test_red(root->right->right);
-    test_int(19,root->right->right->key);
+    test_key_black(root->left->right, 2);
+
+    test_key_red(root->right->left,11);
+    test_key_red(root->left->right->right,7);
+    test_key_red(root->right->right,19);
 }
 
 /*测试二叉树删除的算法*/
@@ -343,8 +346,10 @@ static void testBinTreeDelete(){
         insert_node(node);
     }
 #undef insert_node
+    
+#define DEBUG_BIN_DELETE
     rbtree_node_t* node = nodes[2];
-    rbtree_delete_value(&event_timer_rbtree,node);
+    rbtree_delete(&event_timer_rbtree,node);
     rbtree_node_t* root = event_timer_rbtree.root->right;
     test_int(5,root->key);
     test_int(8,root->right->key);
@@ -352,11 +357,53 @@ static void testBinTreeDelete(){
     test_int(4,root->left->right->key);
     test_int(root->right->right->left->key == 9,1);
     test_int(root->right->right->right == event_timer_rbtree.sentinel,1);
-    rbtree_delete_value(&event_timer_rbtree,nodes[2]);
+    rbtree_delete(&event_timer_rbtree,nodes[2]);
     test_int(9,root->right->key);
     test_int(root->right->right->left == event_timer_rbtree.sentinel,1);
-
+#undef DEBUG_BIN_DELETE
 }
+
+
+/*检验红黑树删除的算法正确性,从网上找的例子*/
+static void testRBTreeDelete(){
+    rbtree_init(&event_timer_rbtree, &event_timer_sentinel,rbtree_insert_timer_value);
+    rbtree_key_t arr[] = {12,1,9,2,0,11,7,19,4,15,18,5,14,13,10,16,6,3,8,17};
+    rbtree_node_t* nodes[10];
+    int len = sizeof(arr) / sizeof(rbtree_key_t);
+    
+#define insert_node(node) rbtree_insert(&event_timer_rbtree,node)
+    for(int i = 0; i < len;i++){
+        rbtree_node_t* node = create_node(arr[i]);
+        nodes[i] = node;
+        insert_node(node);
+    }
+#undef insert_node
+
+    rbtree_node_t* root = event_timer_rbtree.root;
+    rbtree_delete(&event_timer_rbtree,root->right->left);// del 12
+    test_key_red(root->right->left, 11);
+    rbtree_delete(&event_timer_rbtree,root->left->left);
+    test_key_red(root->left->left, 2);
+    rbtree_delete(&event_timer_rbtree,root);
+    test_key_black(root, 10);
+    rbtree_delete(&event_timer_rbtree,root->left->left);
+    test_key_black(root->left->left, 3);
+    rbtree_delete(&event_timer_rbtree,root->left->left->left);
+    test_key_black(root->left->left->left, 0);
+    rbtree_delete(&event_timer_rbtree,root->right->left);
+    test_key_black(root->right->left, 13);
+    rbtree_delete(&event_timer_rbtree,root->left->right->right);//del 7
+    test_key_black(root->left->right->right, 8);
+    rbtree_delete(&event_timer_rbtree,root->right->right->right);//del 19
+    test_key_black(root->right->right->right, 18);
+    rbtree_delete(&event_timer_rbtree,root->left);
+    test_key_black(root->left, 5);
+    rbtree_delete(&event_timer_rbtree,root->right->right->left);//del 15
+    test_key_black(root->right->right->left, 16);
+    rbtree_delete(&event_timer_rbtree,root->right->right->right);//del 15
+    test_key_red(root->right->right->left, 16);
+}
+
 
 void test()
 {
@@ -372,4 +419,5 @@ void test()
     testBinTreeInsert();
     testRbTreeInsert();//
     testBinTreeDelete();
+    testRBTreeDelete();
 }

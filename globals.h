@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include "stdarg.h"
+#include <unistd.h>
 #include <sys/types.h>
 
 #define OK 0
@@ -47,9 +48,6 @@ abort();                    \
 }                               \
 } while (0)
 
-# define add_event event_actions.p_add_event
-# define del_event event_actions.p_del_event
-# define event_process event_actions.process_events
 
 #define MASTER 0
 #define WORKER 1
@@ -65,5 +63,6 @@ abort();                    \
 #define MACOS 1
 #define MAX_EVENT_NUM   (65536)
 
-
+#define TIMER_LAZY_DELAY 300
+#define TIMER_INFINITE (1 << 31)
 #endif /* globals_h */
