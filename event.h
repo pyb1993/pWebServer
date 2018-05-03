@@ -46,10 +46,13 @@ struct event_s{
     // timer的结构
 };
 
-void event_del_timer(event_t *ev);
-void event_accept(event_t *ev);
 int event_timer_init();
+void event_accept(event_t *ev);
+void event_del_timer(event_t *ev);
 void event_add_timer(event_t *ev, msec_t timer);
+void event_expire_timers(void);
+msec_t event_find_timer(void);
+
 void time_update();//更新缓存时间
 void timer_signal_handler(int signo);
 

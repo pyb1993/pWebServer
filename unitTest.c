@@ -183,7 +183,7 @@ void testParseOneCase(buffer_t *buf,char *s,int path_len,int host_len,
     ABORT_ON(r->uri.host.len != host_len, "parse host failed!!!");
     ABORT_ON(r->uri.scheme.len != scheme_len, "parse scheme failed!!!");
     ABORT_ON(r->uri.port.len != port_len, "parse port failed!!!");
-    ABORT_ON(r->uri.extension.len != extension_len, "parse extension failed!!!");
+    ABORT_ON(r->uri.extension.extension_str.len != extension_len, "parse extension failed!!!");
     ABORT_ON(r->uri.query.len != query_len, "parse query failed!!!");
     ABORT_ON(r->version.major != 1, "parse version major failed!!!");
     ABORT_ON(r->version.minor != 1, "parse version minor failed!!!");

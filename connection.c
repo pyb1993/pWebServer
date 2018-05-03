@@ -73,11 +73,25 @@ connection_t* getIdleConnection(){
 void http_close_connection(connection_t* c)
 {
     close(c->fd);//读写事件自动被删除
+
+    // 删除相关的定时器事件
+    if (c->rev->timer_set) {
+        event_del_timer(c->rev);
+    }
+    
+    if (c->wev->timer_set) {
+        event_del_timer(c->wev);
+    }
+
     c->data = NULL;
     c->fd = -1;
     c->rev->active = false;
     c->wev->active = false;
-    freePool(c->pool);//将整个pool释放,那么导致buffer将被释放
+    
+    // 在accept之后,init request之前可能timeout,这时候是没有对connection分配内存的
+    if(c->pool != NULL){
+        freePool(c->pool);//将整个pool释放,那么导致buffer将被释放
+    }
     poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面
 }
 
@@ -103,8 +117,8 @@ int buffer_recv(buffer_t* buffer, int fd)
 {
     while (!buffer_full(buffer))
     {
-        int margin = buffer->limit - buffer->end;
-        int len = recv(fd, buffer->end, margin, 0);//最多读margin个字符
+        int margin = (int)(buffer->limit - buffer->end);
+        int len = (int)recv(fd, buffer->end, margin, 0);//最多读margin个字符
         if (len == 0)
         {   // EOF
             return OK;
@@ -135,16 +149,15 @@ void buffer_clear(buffer_t* buffer)
 }
 
 int buffer_size(buffer_t*buffer){
-    return buffer->end - buffer->begin;
+    return (int)(buffer->end - buffer->begin);
 }
 
 int buffer_send(buffer_t* buffer, int fd)
 {
-    //int sent = 0;
     plog("send buffer(fd:%d)",fd);
 
     while (buffer_size(buffer) > 0) {
-        int len = send(fd, buffer->begin, buffer_size(buffer), 0);
+        int len = (int)send(fd, buffer->begin, buffer_size(buffer), 0);
         if (len == -1) {
             if (errno == EAGAIN) {
                 return AGAIN;
@@ -165,7 +178,7 @@ int buffer_send(buffer_t* buffer, int fd)
 
 int append_string_to_buffer(buffer_t* buffer, const string* str)
 {
-    int margin = buffer->limit - buffer->end;
+    int margin = (int)(buffer->limit - buffer->end);
     assert(margin > 0);
     // todo: if the buffer is not enough,we should malloc a big buffer
     
@@ -180,7 +193,7 @@ int buffer_sprintf(buffer_t* buffer, const char* format,...)
 {
     va_list args;
     va_start (args, format);
-    int margin = buffer->limit - buffer->end;
+    int margin = (int)(buffer->limit - buffer->end);
     assert(margin > 0);
 
     int len = vsnprintf(buffer->end, margin, format, args);

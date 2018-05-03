@@ -10,6 +10,7 @@
 #include "header.h"
 #include "commonUtil.h"
 #include "unistd.h"
+#include "event.h"
 #include <sys/time.h>
 int p_reap = 0;
 int p_exit = 0;
@@ -20,7 +21,6 @@ int p_quit = 0;
 long delay = 0;
 int p_event_timer_alarm = 0;//是否收到相应的信号
 
-
 //向所有的worker发送信号
 void signal_worker_processes(vector* workers,int signo){
     for(int i = 0; i < workers->used; ++i){
@@ -28,6 +28,7 @@ void signal_worker_processes(vector* workers,int signo){
         if (worker->pid == -1) {
             continue;
         }
+        
         // worker正在退出,那么就不需要再次发送quit信号(gracefully shutdown)
         if (worker->exiting && signo == SIGQUIT)
         {
@@ -105,7 +106,35 @@ void worker_cycle_process()
 void worker_process_init(){
     event_module.process_init();
     header_map_init();
+    event_timer_init();
     plog("worker process init end");
+}
+
+void process_events_and_timer()
+{
+    msec_t  timer, delta;
+    int flags;
+    
+    if (server_cfg.timer_resolution) {
+        timer = TIMER_INFINITE;
+        flags = 0;
+        
+    } else {
+        timer = event_find_timer();
+        flags = UPDATE_TIME;
+    }
+
+    
+    delta = current_msec;
+    event_process(timer,flags);//传0代表设置了时间精度,依靠定时信号来设置
+    delta = current_msec - delta;
+    
+    // 如果时间太短,就没有必要expire
+    if (delta) {
+        event_expire_timers();
+    }
+    //plog("current msec :%d",current_msec);
+    // process timers
 }
 
 // 利用时间数组来更新缓存时间
@@ -122,6 +151,6 @@ void time_update()
     msec = tv.tv_usec / 1000;   //从微秒usec中计算毫秒msec
     
     current_msec = (msec_t) sec * 1000 + msec;
-    plog("update timer");
+    //plog("update timer");
 }
 

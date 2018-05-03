@@ -25,13 +25,14 @@ return (err);               \
 void http_init_connection(connection_t* c)
 {
     event_t* rev = c->rev;
+    rev->timedout = 0;//设置超时状态
     //读事件回调
     rev->handler = http_init_request;//应该是init_request函数
     
     //该写回调没有做任何事件，因为这个阶段还不需要向客户端写入任何数据
     c->wev->handler = NULL;
     
-    //将读事件插入到红黑树中，用于管理超时事件，post_accept_timeout超时事件
+    //将读事件插入到红黑树中，用于管理超时事件，post_accept_timeout超时事件,这是第一个超时事件,实际上后面的函数都可以检验这个超时事件
     event_add_timer(rev, server_cfg.post_accept_timeout);
     
     //将读事件注册到epoll中，此时并没有把写事件注册到epoll中，因为现在还不需要向客户端发送任何数据，所以写事件并不需要注册
@@ -89,9 +90,7 @@ void http_close_request(http_request_t* r)
 }
 
 
-/*clear request,但是不释放链接,也不释放request的内存池,
-  等待下一次的链接重用 
- */
+/*clear request,但是不释放链接,也不释放request的内存池,等待下一次的链接重用*/
 void http_clear_request(http_request_t* r)
 {
     memory_pool* pool = r->pool;
@@ -127,11 +126,18 @@ void http_response_done(http_request_t* r){
 void handle_response(event_t* wev)
 {
     connection_t* c = wev->data;
+    http_request_t* r = c->data;
+    
+    if(wev->timedout){
+        plog("server timed out : send response");
+        http_close_request(r);
+        return;
+    }
+    
     if(c->fd == -1){
         return;
     }
     
-    http_request_t* r = c->data;
     int err = buffer_send(c->buffer, c->fd);
     if(err == OK){
         if(r->resource_fd > 0 && !r->response_done)
@@ -143,6 +149,9 @@ void handle_response(event_t* wev)
             return;
         }
         http_response_done(r);
+    }
+    else if(err == AGAIN){
+    // todo
     }
     else if(err == ERROR){
         http_close_request(r);
@@ -173,8 +182,16 @@ void handle_response_file(event_t* wev)
  */
 void http_init_request(event_t* rev)
 {
-    plog("begin init request!!!");
     connection_t* c = rev->data;
+    
+    /* 若当前读事件超时，则记录错误日志，关闭所对应的连接并退出 */
+    if (rev->timedout) {
+        plog( "connection:%d client timed out(init request)",c->fd);
+        http_close_connection(c);
+        return;
+    }
+
+    plog("begin init request!!!");
     c->data = create_http_request();
     ((http_request_t*)c->data)->connection = c;
     
@@ -207,8 +224,15 @@ void request_handle_body(event_t * rev)
         return;
     }
     
-    c->wev->handler = handle_response;
+    if(rev->timedout){
+        plog("client timed out : handle body");
+        http_close_request(req);
+        return;
+    }
     
+    
+    event_del_timer(rev);//现在不需要读了,删除计时器
+    c->wev->handler = handle_response;
     // 如果已经在解析的时候就出错了,那么response_done会被设置为true
      if (req->response_done){return;}
 
@@ -221,19 +245,30 @@ void request_handle_body(event_t * rev)
     
     req->status = 200;
     construct_response(c->data);
+
+    // todo: fix me : time out
+    event_add_timer(c->wev, server_cfg.post_accept_timeout);
 }
 
+
+/*解析buffer里面的header部分,如果阻塞,就加入timer*/
 void request_handle_headers(event_t* rev) {
    
     connection_t* c = rev->data;
     http_request_t* req = c->data;
+    
+    if(rev->timedout){
+        plog("client time out: handle header");
+        http_close_request(req);
+        return;
+    }
     
     if(c->fd == -1){
         http_close_request(req);
         return;
     }
     
-    //当解析没有完成的时候执行循环
+    // 当解析没有完成的时候执行循环
     int err;
     while (!req->response_done) {
         err = parse_header(req,c->buffer);
@@ -271,10 +306,12 @@ void request_handle_headers(event_t* rev) {
             }
                 
             case AGAIN:
+                if(!rev->timer_set){
+                    event_add_timer(rev, server_cfg.post_accept_timeout);
+                }
                 return;
         }
     }
-    
 done:
     rev->handler = request_handle_body;
     request_handle_body(rev);
@@ -287,22 +324,23 @@ done:
 int request_process_uri(http_request_t* r){
     uri_t* uri = &r->uri;
     // todo
+    char* real_path;
     
     if(uri->abs_path.c == NULL){
         uri->abs_path = STRING("./");
-    }
-    const char* real_path;
-    if (uri->abs_path.len == 1){
         real_path = "./";
     }
     else{
         real_path = uri->abs_path.c;
+        *(real_path + uri->abs_path.len + uri->extension.extension_str.len + 1) = 0;
     }
     
     int fd = server_cfg.root_fd;
+    //real_path = "index.html";
     fd = openat(server_cfg.root_fd, real_path, O_RDONLY);//打开对应的rel_path
 
     if(fd == -1){
+        construct_err(r, r->connection, 404);
         return ERROR;
         //return response_build_err();
     }
@@ -316,20 +354,31 @@ int request_process_uri(http_request_t* r){
         if (fd == -1) {
             // Accessing to a directory is forbidden
             // return response_build_err(r, 403);
-            int err = errno;
             ABORT_ON(1, "open failed");
         }
         
         fstat(fd, &st);
-        if(uri->extension.c == NULL){
-            uri->extension = STRING("html");
+        if(uri->extension.extension_str.c == NULL){
+            uri->extension.extension_type = HTML;
         }
+    
     }
     if(r->version.minor == 1){
         r->keep_alive = true;
     }
     r->resource_fd = fd;
     r->resource_len = st.st_size;
+    
+    if (stringEq(&r->uri.extension.extension_str ,&STRING("html"))){
+        r->uri.extension.extension_type = HTML;
+    }else if(stringEq(&r->uri.extension.extension_str ,&STRING("txt"))){
+        r->uri.extension.extension_type = TXT;
+    }else if(stringEq(&r->uri.extension.extension_str ,&STRING("json"))){
+        r->uri.extension.extension_type = JSON;
+    }else {
+        r->uri.extension.extension_type = UNKNOWN_EXTENSION;
+    }
+    //uri->extension = STRING("html");
     return OK;
 }
 
@@ -338,64 +387,67 @@ void ngx_http_process_request_line(event_t* rev){
     int                n;
     http_request_t        *req;
     connection_t          *c;
-    
+    int rc;
+
     /* 获取当前请求所对应的连接 */
     c = rev->data;
     req = c->data;
+    
+    if (rev->timedout) {
+        plog("client timed out");
+        http_close_request(req);
+        return;
+    }
     
     if(c->fd == -1){
         http_close_request(req);
         return;
     }
     
-    /* 获取当前请求接收缓冲区的数据，header_in 是ngx_buf_t类型 */
-    /* 设置NGX_AGAIN标志，表示请求行还没解析完毕 */
-    int rc = AGAIN;
-    while(1)
-    {
-        /* 若请求行还没解析完毕，则继续解析 */
-        if (rc == AGAIN) {
-            /* 读取当前请求未解析的数据 */
-            n = buffer_recv(c->buffer, c->fd);
-            
-            /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
-            if (n == ERROR || n == OK) {
-                plog("the request done");
-                http_close_request(req);
-                return;
-            }
-        }
-        
-        /* 解析接收缓冲区c->buffer中的请求行 */
-        rc = http_parse_request_line(req, c->buffer);
-        
-        /* 若请求行解析完毕 */
-        if (rc == OK) {
-            /* 开始解析header的部分,注意设置状态的转换 */
-            rev->handler = request_handle_headers;
-            req->state = HD_BEGIN;
-            request_process_uri(req);
-            plog("process uri succ");
-            request_handle_headers(rev);//交给解析头部的函数了
-            return;
-        }
-        
-        /* 解析请求行出错 */
-        if (rc != AGAIN) {
-            /* there was error while a request line parsing */
-            construct_err(req, req->connection, 400);
-            return;
-        }
-        
-        /* NGX_AGAIN: a request line parsing is still incomplete */
-        /* 请求行仍然未解析完毕，则继续读取请求数据 */
-        /* 若当前接收缓冲区内存不够，则分配更大的内存空间
-           注意,如果分配更大内存,需要处理所有的uri上面的指针指向新的内存上面
-            
-            存在只发了一半的请求行就结束的可能
-         */
-        ABORT_ON(buffer_full(c->buffer) || (n == OK), "buffer is not enough!!!");
+    /* 读取当前请求未解析的数据 */
+    n = buffer_recv(c->buffer, c->fd);
+
+    /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
+    if (n == ERROR || n == OK) {
+        plog("the request done");
+        http_close_request(req);
+        return;
     }
+
+    /* 解析接收缓冲区c->buffer中的请求行 */
+    rc = http_parse_request_line(req, c->buffer);
+    
+    /* 若请求行解析完毕 */
+    if (rc == OK) {
+        /* 开始解析header的部分,注意设置状态的转换 */
+        rev->handler = request_handle_headers;
+        req->state = HD_BEGIN;
+        request_process_uri(req);
+        plog("process uri succ");
+        request_handle_headers(rev);//交给解析头部的函数了
+        return;
+    }
+    
+    /* 解析请求行出错 */
+    if (rc != AGAIN) {
+        /* there was error while a request line parsing */
+        construct_err(req, req->connection, 400);
+        return;
+    }
+    
+    // 阻塞了,需要设置超时事件
+    if (!rev->timer_set) {
+        event_add_timer(rev, server_cfg.post_accept_timeout);
+    }
+    
+    /* NGX_AGAIN: a request line parsing is still incomplete */
+    /* 请求行仍然未解析完毕，则继续读取请求数据 */
+    /* 若当前接收缓冲区内存不够，则分配更大的内存空间
+       注意,如果分配更大内存,需要处理所有的uri上面的指针指向新的内存上面
+        存在只发了一半的请求行就结束的可能
+     */
+    ABORT_ON(buffer_full(c->buffer) || (n == OK), "buffer is not enough!!!");
+    return;
 }
 
 /*解析请求行 method uri http/version*/
@@ -467,7 +519,7 @@ int http_parse_request_line(http_request_t* r,buffer_t *b){
                                 r->uri.port.len = p - r->uri.port.c;
                             }
                             else if (r->uri.state == URI_EXTENSION){
-                                r->uri.extension.len = p - r->uri.extension.c;
+                                r->uri.extension.extension_str.len = p - r->uri.extension.extension_str.c;
 
                             }
                             else if (r->uri.state == URI_QUERY){
@@ -753,7 +805,7 @@ case ALLOWED_IN_ABS_PATH
             switch (ch) {
                 case 'a' ... 'z':
                 case 'A' ... 'Z':
-                    uri->extension.c = p;
+                    uri->extension.extension_str.c = p;
                     uri->state = URI_EXTENSION;
                     break;
                 default:
@@ -767,7 +819,7 @@ case ALLOWED_IN_ABS_PATH
                 case 'A' ... 'Z':
                     break;
                case '?':
-                    uri->extension.len = p - uri->extension.c;
+                    uri->extension.extension_str.len = p - uri->extension.extension_str.c;
                     uri->state = URI_BEFORE_QUERY;
                     break;
                 default:

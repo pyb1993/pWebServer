@@ -83,22 +83,27 @@ int kqueue_del_event (event_t *ev, int event, uint flags)
 }
 
 
-// 进行事件循环并且处理
-void kqueue_process_events(msec_t timer){
+// 进行事件循环并且处理, 如果没有设定精度,那么timer将是(2^32 -1)
+void kqueue_process_events(msec_t timer,int flags){
     struct kevent events[MAX_EVENT_NUM];
     struct timespec kq_timeout;
     int n;
     
     // 根据传入的timer来设定超时
-    if(timer == 0){
+    if(timer == TIMER_INFINITE){
         n = kevent(kq, NULL, 0, events, MAX_EVENT_NUM, NULL);
     }else{
-        kq_timeout.tv_nsec = timer * 1000000;
+        kq_timeout.tv_sec = timer / 1000;
+        kq_timeout.tv_nsec =  (timer % 1000) * 1000000;
         n = kevent(kq, NULL, 0, events, MAX_EVENT_NUM, &kq_timeout);
     }
-    
-        /* 更新时间，将时间缓存到一组全局变量中，方便程序高效获取事件 */
+
+    /* 设置时间精度的情况下(flags == 0),检查是不是定时信号唤起
+       没有设置时间精度,那么任何情况下epoll_wait返回都会直接更新时间
+     */
+    if((flags & UPDATE_TIME) || p_event_timer_alarm ){
         time_update();
+    }
         if(n == -1){
             if(errno != EINTR){
                 if (p_event_timer_alarm) {

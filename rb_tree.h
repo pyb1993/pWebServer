@@ -14,7 +14,7 @@ typedef uint32_t  rbtree_key_t;
 typedef int32_t   rbtree_key_int_t;
 
 #define timer_after(b,a) ((rbtree_key_int_t)((a) - (b)) < 0)
-#define is_expired(key,cur_msec) timer_after(key,cur_msec)
+#define is_expired(key,cur_msec) timer_after(cur_msec,key)
 
 
 typedef struct rbtree_node_s  rbtree_node_t;

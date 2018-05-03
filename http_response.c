@@ -199,7 +199,6 @@ static char err_507_page[] =
 "<center><h1>507 Insufficient Storage</h1></center>" CRLF;
 
 
-
 void buffer_append_status_line(version_t version,int status,buffer_t* b)
 {
     
@@ -229,6 +228,8 @@ void append_err_page(buffer_t* b,int err){
     
     switch(err){
     ERR_PAGE(400);
+    ERR_PAGE(403);
+    ERR_PAGE(404);
     ERR_PAGE(500);
     }
     
@@ -263,15 +264,22 @@ void construct_response(http_request_t* r){
     buffer_append_status_line(r->version, r->status, b);
     
     // append content type to
-    if (stringEq(&r->uri.extension,&STRING("html"))){
-        buffer_append_cstring(b, "Content-Type: text/html; charset=utf-8\r\n");
+    switch(r->uri.extension.extension_type){
+        case HTML:
+            buffer_append_cstring(b, "Content-Type: text/html; charset=utf-8\r\n");
+            break;
+        case TXT:
+            buffer_append_cstring(b, "Content-Type: text/plain; charset=utf-8\r\n");
+            break;
+        case JSON:
+            buffer_append_cstring(b, "Content-Type: application/json; charset=utf-8\r\n");
+            break;
+        default:
+            plog("unknown extension");
+            buffer_append_cstring(b, "Content-Type: text/html; charset=utf-8\r\n");
+            break;
     }
-    else if (stringEq(&r->uri.extension,&STRING("txt"))){
-        buffer_append_cstring(b, "Content-Type: text/plain; charset=utf-8\r\n");
-    }
-    else{
-        buffer_append_cstring(b, "Content-Type: text/plain; charset=utf-8\r\n");
-    }
+
     buffer_sprintf(b,"Content-Length: %d\r\n",r->resource_len);
     buffer_append_cstring(b, "\r\n");
 }

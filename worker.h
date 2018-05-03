@@ -25,7 +25,6 @@ extern int p_sigalarm;
 extern int process_status;// worker/master/single
 extern int current_msec;//缓存了当前的时间,单位是ms
 extern int p_event_timer_alarm;//设定时间缓存的精度
-
 extern long delay;
 
 typedef struct worker_t{

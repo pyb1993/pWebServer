@@ -145,6 +145,5 @@ void event_expire_timers(void)
 
  void timer_signal_handler(int signo)
  {
-     plog("timer signal recieved");
      p_event_timer_alarm = 1;
  }

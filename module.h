@@ -29,7 +29,7 @@ typedef struct p_event_actions{
     int (*p_add_event)(event_t *ev, int event, uint flags);
     int (*p_del_event)(event_t *ev, int event, uint flags);
     int (*event_init)();//在事件模块启动的时候进行初始化
-    void (*process_events)(msec_t timer);//在事件循环的时候等待
+    void (*process_events)(msec_t timer,int flags);//在事件循环的时候等待
 } event_actions_t;
 
 /*event模块的上下文(通用接口)*/

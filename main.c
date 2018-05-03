@@ -16,6 +16,7 @@
 #include "module.h"
 #include "header.h"
 #include "worker.h"
+#include "event.h"
 
 
 int listen_fd;
@@ -157,12 +158,7 @@ void signal_init()
     }
 }
 
-void process_events_and_timer()
-{
-    event_process(0);//传0代表设置了时间精度,依靠定时信号来设置
-    plog("current msec :%d",current_msec);
-    // process timers
-}
+
 
 int main(int argc, const char * argv[])
 {

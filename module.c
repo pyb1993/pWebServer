@@ -52,8 +52,6 @@ module_t event_module = {
 // 这个connection对应着多一个读事件
 int event_process_init()
 {
-    
-    
     // 根据不同的事件模型进行初始化
     if(1)
     {

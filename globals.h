@@ -64,5 +64,6 @@ abort();                    \
 #define MAX_EVENT_NUM   (65536)
 
 #define TIMER_LAZY_DELAY 300
-#define TIMER_INFINITE (1 << 31)
+#define TIMER_INFINITE ((msec_t)-1)
+#define UPDATE_TIME 1
 #endif /* globals_h */

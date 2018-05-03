@@ -27,8 +27,13 @@ void event_accept(event_t *ev)
             plog("accept connection %d", conn_fd);
         }
         
+        // 因为上一个事件里面的timedout可能是1,所以这里要进行处理,但是将处理延迟到分配到该事件之后进行
+        if (ev->timedout) {
+            ev->timedout = 0;
+        }
+        
         //获取一个空闲连接对象
-        //存在的问题在于,如果客户端不发送实际的数据,那么就会平白分配内存
+        //延迟分配connection的内存池
         connection_t* c = getIdleConnection();
         
         //给新连接对象赋值

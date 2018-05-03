@@ -70,13 +70,23 @@ typedef enum{
     M_INVALID_METHOD
 }method_t;
 
+typedef enum {
+    HTML,
+    JSON,
+    TXT,
+    UNKNOWN_EXTENSION
+}extenstion_t;
+
 typedef struct uri_t{
     req_state_t state;
     string scheme;
     string abs_path;
     string host;
     string port;
-    string extension;
+    union{
+        string extension_str;
+        extenstion_t extension_type;
+    } extension;
     string query;
 }uri_t;
 
