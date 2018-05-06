@@ -50,7 +50,7 @@ typedef struct {
 
 
 void strlow(u_char *dst, u_char *src, size_t n);
-uint hash_key_function(u_char *data, size_t len);
+uint hash_key_function(char *data, size_t len);
 int hashInit(hash_initializer *hinit, hash_key *names, uint nelts);
 void* hash_find(hash* h, char * name, size_t len);
 

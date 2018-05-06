@@ -15,7 +15,7 @@
 #include "memory_pool.h"
 #include "string_t.h"
 
-#define BUF_SIZE 2048
+#define BUF_SIZE 1024
 
 typedef struct buffer_s{
     char * begin;
@@ -32,8 +32,6 @@ typedef struct connection {
     int fd;
     int side;
     void * data;//用来保存request
-    buffer_t *buffer;
-    memory_pool* pool;
     event_t* rev;
     event_t* wev;
 } connection_t;
@@ -55,4 +53,5 @@ buffer_t* createBuffer(memory_pool* pool);
 void buffer_clear(buffer_t* buffer);
 int buffer_send(buffer_t* buffer, int fd);
 int buffer_size(buffer_t*buffer);
+bool buffer_full(buffer_t* buffer);
 #endif /* connection_h */

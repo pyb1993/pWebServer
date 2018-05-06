@@ -210,9 +210,10 @@ void buffer_append_status_line(version_t version,int status,buffer_t* b)
     }
 
     switch (status) {
-        case 100: buffer_append_cstring(b,"100 continue");
-        case 200: buffer_append_cstring(b,"200 OK");
-        default:  buffer_append_cstring(b,"500 Internal Server Error");
+        case 100: buffer_append_cstring(b,"100 continue");break;
+        case 200: buffer_append_cstring(b,"200 OK");break;
+        case 404:  buffer_append_cstring(b,"404 not found");break;
+        default:  buffer_append_cstring(b,"500 Internal Server Error");break;
     }
     buffer_append_cstring(b,"\r\n");
 }
@@ -238,10 +239,14 @@ void append_err_page(buffer_t* b,int err){
 #undef ERR_PAGE
 }
 
-/*response done来指示,什么时候整个请求已经结束了
+/*
+    根据err,将对应的错误信息写入send_buffer,再此之前回清空send buffer
+    response done来指示,什么时候整个请求已经结束了
+    同时关闭对应的读事件,开启对应的写事件,下一次回调
+    就会把数据写回客户端
  */
 int construct_err(http_request_t* r,connection_t* c, int err) {
-    buffer_t* b = c->buffer;
+    buffer_t* b = r->send_buffer;
     buffer_clear(b);
     buffer_append_status_line(r->version, err, b);
     buffer_append_cstring(b, "Server: " "pwebServer" "\r\n");
@@ -251,6 +256,7 @@ int construct_err(http_request_t* r,connection_t* c, int err) {
     buffer_append_cstring(b, "\r\n");
     add_event(c->wev,WRITE_EVENT,0);
     del_event(c->rev,READ_EVENT,0);
+    c->wev->handler = handle_response;
     r->status = err;
     r->response_done = true;
     return OK;
@@ -259,8 +265,8 @@ int construct_err(http_request_t* r,connection_t* c, int err) {
 // 写入回复应该有的header
 void construct_response(http_request_t* r){
     connection_t* c = r->connection;
-    buffer_t* b = c->buffer;
-    buffer_clear(c->buffer);
+    buffer_t* b = r->send_buffer;
+    buffer_clear(r->send_buffer);
     buffer_append_status_line(r->version, r->status, b);
     
     // append content type to

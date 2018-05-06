@@ -15,7 +15,7 @@
 
 typedef struct string{
     char * c;
-    int len;
+    long len;
 } string;
 
 extern const string NULL_STR;

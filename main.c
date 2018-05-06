@@ -162,13 +162,13 @@ void signal_init()
 
 int main(int argc, const char * argv[])
 {
-    config_load();
     if(server_cfg.daemon){
      //  daemon(1,0);
     }
     //test();
     //exit(0);
-    
+
+    config_load();
     signal_init();
     plog("master %d run\n",getpid());
     //create_worker_process();

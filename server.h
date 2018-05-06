@@ -22,6 +22,7 @@
 
 void accept_connection(int socket);
 void singal_handler(int signal);
+int set_nonblocking(int sockfd);
 
 typedef struct {
     int     signo;

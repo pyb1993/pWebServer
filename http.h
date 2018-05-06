@@ -77,8 +77,12 @@ typedef enum {
     UNKNOWN_EXTENSION
 }extenstion_t;
 
+typedef enum {
+    IDENTITY
+} transfer_encoding_t;
+
 typedef struct uri_t{
-    req_state_t state;
+    uri_state_t state;
     string scheme;
     string abs_path;
     string host;
@@ -98,8 +102,10 @@ typedef struct {
 
 typedef struct http_request_s{
     memory_pool* pool;
+    buffer_t *recv_buffer;
+    buffer_t *send_buffer;
     connection_t* connection;
-    connection_t* upsream;
+    connection_t* upstream;
     string request_line;
     uri_t uri;
     version_t version;
@@ -107,10 +113,12 @@ typedef struct http_request_s{
     string header_name;
     string header_value;
     request_header_t headers;
-    
+    transfer_encoding_t t_encoding;
+    req_state_t state;
     int status;
-    int state;
     int port;
+    int content_length;
+    int body_received;
     int resource_off;
     int resource_fd;
     long resource_len;
@@ -118,6 +126,14 @@ typedef struct http_request_s{
     uint8_t keep_alive: 1;
 } http_request_t;
 
+// 用来描述一个后台进程的url,协议,host(ip),port
+typedef struct {
+    bool pass;
+    string path; // localhost
+    string root;// ip???
+    string host;// rails.com
+    uint16_t port;
+} location_t;
 
 void http_init_connection(connection_t* c);
 void ngx_http_process_request_line(event_t* rev);
@@ -133,9 +149,11 @@ void http_response_done();
 http_request_t* create_http_request();
 void request_handle_headers(event_t* rev);
 void request_handle_body(event_t * rev);
+int parse_request_body_identity(http_request_t* r);
 int request_process_uri(http_request_t* r);
 int send_respose(event_t* wev);
-
+void http_proxy_pass(event_t* wev);
+void http_recv_upstream(event_t* rev);
 void handle_response(event_t* wev);
 int construct_err(http_request_t* r,connection_t* c, int err);
 void construct_response(http_request_t* req);

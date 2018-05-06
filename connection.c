@@ -88,10 +88,6 @@ void http_close_connection(connection_t* c)
     c->rev->active = false;
     c->wev->active = false;
     
-    // 在accept之后,init request之前可能timeout,这时候是没有对connection分配内存的
-    if(c->pool != NULL){
-        freePool(c->pool);//将整个pool释放,那么导致buffer将被释放
-    }
     poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面
 }
 
@@ -199,7 +195,7 @@ int buffer_sprintf(buffer_t* buffer, const char* format,...)
     int len = vsnprintf(buffer->end, margin, format, args);
     buffer->end += len;
     assert(len <= margin);// todo:the buffer is not enough
-    va_end (args);
+    va_end(args);
     return len;
 }
 

@@ -8,7 +8,7 @@
 
 #include "hash.h"
 
-uint hash_key_function(u_char *data, size_t len)
+uint hash_key_function(char *data, size_t len)
 {
     uint  i, key;
     
@@ -43,7 +43,6 @@ int hashInit(hash_initializer *hinit, hash_key *names, uint nelts)
         }
     }
     
-
     test = pMalloc(hinit->pool, hinit->max_size * sizeof(u_short));
     if(test == NULL){
         return ERROR;

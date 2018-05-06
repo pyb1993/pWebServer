@@ -41,6 +41,7 @@ typedef struct header_kv_t{
 
 void header_map_init();
 int parse_header(http_request_t* r,buffer_t* b);
+int request_process_uri(http_request_t* r);
 int header_handle_generic(http_request_t* r, int offset);
 int header_handle_connection(http_request_t* r,int offset);
 extern  hash* header_map;

@@ -19,11 +19,9 @@ static header_kv_t header_array[] = {
     HEADER_KV(cookie, header_handle_generic),
     HEADER_KV(date, header_handle_generic),
     HEADER_KV(connection, header_handle_connection)
-
 };
 
 static hash_key header_ele_array[MAX_HEADER_SIZE] = {};
-
 hash* header_map;
 
 /*利用hash构造 header*/
