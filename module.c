@@ -10,6 +10,7 @@
 #include "globals.h"
 #include "server.h"
 #include "kqueue_event_module.h"
+#include "upstream_server_module.h"
 #include "connection.h"
 #include "http.h"
 #include "commonUtil.h"
@@ -27,7 +28,6 @@ event_module_t event_module_ctx = {
     {}
 };
 
- 
  /******************************/
 module_t event_module = {
     STRING("event module"),
@@ -37,15 +37,58 @@ module_t event_module = {
 };
 
 
-// listenning socket的回调函数
-/*
- 需要取出所有的fd
- 
- 这里存在的一个问题是,在事件A里面释放事件C的链接,但是事件B又申请了一个新链接,这就导致事件
- C将会把链接搞混(单纯的把fd变成-1解决不了这个问题),需要通过instance来进行取反判定。但是
- 如果同时出现事件B,B'也会造成两次取反,所以还有一个做法是将accept的事件先执行,其他事件后面执行
- 就不会导致链接出问题了
- */
+module_t upstream_module = {
+    STRING("upstream module"),
+    NULL,
+    &upstream_process_init,
+    &upstream_module_init
+};
+
+
+// 用来在worker启动的时候,初始化upstream的相关对象
+int upstream_process_init(){
+    //首先要初始化servers
+    servers.nelts = server_cfg.domain_num;
+    servers.server_ip_arr = (upsream_server_arr_t*)malloc(sizeof(upsream_server_arr_t) * servers.nelts);
+    for(int i = 0; i < servers.nelts; ++i){
+        upsream_server_arr_t* server_arr = servers.server_ip_arr + i;
+        server_arr->nelts = 5;// 这里写死; todo以后依靠配置文件来定
+        server_arr->upstream_server = (upsream_server_t*)malloc(server_arr->nelts * sizeof(upsream_server_t));
+        string* domain_name = (string*)server_cfg.loc_name_arr + i;
+        server_arr->domain_name = domain_name;
+
+        location_t* loc = hash_find(server_cfg.locations, domain_name->c, domain_name->len);// 获取到loc对象数组,并用这个数组来初始化下面的对象
+        for(int j = 0; j < server_arr->nelts; ++j){
+            // 初始化每一个 ip对应的数据
+            location_t* one_server_loc = loc + j;
+            upsream_server_t* upstream_server = server_arr->upstream_server + j;
+            upstream_server->effective_weight = one_server_loc->weight;
+            upstream_server->weight = one_server_loc->weight;
+            upstream_server->location = one_server_loc;
+            upstream_server->current_weight = 0;
+            upstream_server->status_changed = 0;
+            upstream_server->max_fails = 1;
+            upstream_server->fails = 0;
+            upstream_server->fail_timeout = one_server_loc->fail_timedout;
+        }
+    }
+    
+    // 接下来要初始化几个结构,根据负载均衡参数设置的不同,选择不一样的context
+    if(1){
+        plog("round load balance module is selected\n");
+        upstream_module.ctx = &upstream_server_round_module_ctx;
+    }else{
+        assert(0);
+        upstream_module.ctx = &upstream_server_chash_module_ctx;
+    }
+    
+    return OK;
+};
+
+
+int upstream_module_init(){
+    return OK;
+};
 
 
 // 用来在每一个worker开始的时候进行初始化,通过对应的配置来选择对应的事件驱动模型
@@ -119,10 +162,5 @@ int event_process_init()
             plog("setitimer() failed");
         }
     }
-    
     return OK;
 }
-
-
-
-

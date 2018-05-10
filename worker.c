@@ -105,13 +105,15 @@ void worker_cycle_process()
 // 在worker启动的时候进行初始化
 void worker_process_init(){
     event_module.process_init();
+    upstream_module.process_init();
+    // todo upstream_module.process_init();
     header_map_init();
     event_timer_init();
     plog("worker process init end");
 }
 
 void process_events_and_timer()
-{
+{    
     msec_t  timer, delta;
     int flags;
     
@@ -154,3 +156,21 @@ void time_update()
     //plog("update timer");
 }
 
+/*
+ 接受一个connect请求
+ */
+void accept_connection(int socket){
+    while (1) {
+        int conn_fd = accept(socket,NULL,NULL);
+        connection_t* c = getIdleConnection();
+        c->fd = conn_fd;
+        c->side = C_DIRECTSTREAM;
+        if(conn_fd == ERROR){
+            ERR_ON((errno != EWOULDBLOCK), "accept");
+            break;
+        }
+        else{
+            plog("new connection conn_fd %d\n", conn_fd);
+        }
+    }
+}

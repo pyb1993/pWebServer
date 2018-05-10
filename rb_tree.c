@@ -25,9 +25,9 @@ void rbtree_left_rotate(rbtree_node_t **root,rbtree_node_t *node,rbtree_node_t *
     }
     
     y->parent = node->parent;
-    if(node->parent == sentinel){
+    if(node == *root){
     //  node是根节点了
-        *root = node;
+        *root = y;
     }
     else if(node->parent->left == node){
         // node是左子节点
@@ -64,7 +64,6 @@ void rbtree_right_rotate(rbtree_node_t **root, rbtree_node_t* node,rbtree_node_t
         
     } else if (node == node->parent->right) {
         node->parent->right = y;
-        
     } else {
         node->parent->left = y;
     }
@@ -145,7 +144,6 @@ void rbtree_insert(rbtree_t* tree,rbtree_node_t * node)
 {
 
     rbtree_node_t  **root, *temp, *sentinel;
-    
     /* a binary tree insert */
     root = (rbtree_node_t **) &tree->root;
     sentinel = tree->sentinel;
@@ -335,65 +333,115 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
     rbt_black(temp);
 }
 
-/*
- 删除一个node节点,按照二叉树的删除方式进行
- */
-void rbtree_delete(rbtree_t* tree,rbtree_node_t* node)
+
+
+
+/* 删除节点 */
+void
+rbtree_delete( rbtree_t *tree,
+                  rbtree_node_t *node)
 {
+    uint           red;
     rbtree_node_t  **root, *sentinel, *subst, *temp, *w;
+    
+    /* a binary tree delete */
+    
     root = (rbtree_node_t **) &tree->root;
     sentinel = tree->sentinel;
     
-    while(1){
-        if(node->left == sentinel){
-            temp = node->right;
-            subst = node;
-        }
-        else if (node->right == sentinel){
-            temp = node->left;
-            subst = node;
-        }
-        else{
-            subst = rbtree_min(node->right, sentinel);/* 获取node节点的后续节点 */
-            if (subst->left != sentinel) {
-                temp = subst->left;
-            } else {
-                temp = subst->right;
-            }
-        }
-
-        /* 若被替换的节点是根节点，则temp直接替换该节点
-           这种情况一定是node节点只有左节点或者右节点,否则subst不会是根节点
-         */
-        if (subst == *root) {
-            *root = temp;
-            rbt_black(temp);
-            return;
-        }
-
-        if(subst == node){
-            /* case1,2,某个节点为空*/
-            if (subst == subst->parent->left) {subst->parent->left = temp;}
-            else {subst->parent->right = temp;}
-            temp->parent = subst->parent;
-            break;
-        }else{
-            /*case3,复制后继节点,然后递归的删除subst*/
-            node->key = subst->key;
-            node = subst;
-            continue;
+    /* 下面是获取temp节点值，temp保存的节点是准备替换节点node ；
+     * subst是保存要被替换的节点的后继节点；
+     */
+    
+    /* case1：若node节点没有左孩子（这里包含了存在或不存在右孩子的情况）*/
+    if (node->left == sentinel) {
+        temp = node->right;
+        subst = node;
+        
+    } else if (node->right == sentinel) {/* case2：node节点存在左孩子，但是不存在右孩子 */
+        temp = node->left;
+        subst = node;
+        
+    } else {/* case3：node节点既有左孩子，又有右孩子 */
+        subst = rbtree_min(node->right, sentinel);/* 获取node节点的后续节点 */
+        
+        if (subst->left != sentinel) {
+            temp = subst->left;
+        } else {
+            temp = subst->right;
         }
     }
     
-    if(rbt_is_red(node)){
+    /* 若被替换的节点subst是根节点，则temp直接替换subst称为根节点,这里只可能是case1/2 */
+    if (subst == *root) {
+        *root = temp;
+        rbt_black(temp);
         return;
     }
     
-    //接下来调整性质
-    #ifndef DEBUG_BIN_DELETE
-    rbtree_fix_after_delete(tree, temp);
-    #endif
+    /* red记录subst节点的颜色 */
+    red = rbt_is_red(subst);
     
+    /* temp节点替换subst节点,现在开始,subst节点已经不存在了 */
+    if (subst == subst->parent->left) {
+        subst->parent->left = temp;
+        
+    } else {
+        subst->parent->right = temp;
+    }
+    
+    /* 根据subst是否为node节点进行处理 */
+    if (subst == node) {
+        temp->parent = subst->parent;
+        
+    } else {
+        // case 3的情况
+        
+        // 处理 temp和subst的关系
+        if (subst->parent == node) {
+            // now, temp is sentinel
+            temp->parent = subst;
+        }else {
+            temp->parent = subst->parent;
+        }
+        
+        /* 复制node节点属性 */
+        subst->left = node->left;
+        subst->right = node->right;
+        subst->parent = node->parent;
+        rbt_copy_color(subst, node);
+        
+        // 处理node->parent和subst的关系
+        if (node == *root) {
+            *root = subst;
+            
+        } else {
+            if (node == node->parent->left) {
+                node->parent->left = subst;
+            } else {
+                node->parent->right = subst;
+            }
+        }
+        
+        // 处理subst的child和subst的关系,实际上是node的child和subst的关系
+        if (subst->left != sentinel) {
+            subst->left->parent = subst;
+        }
+        
+        if (subst->right != sentinel) {
+            subst->right->parent = subst;
+        }
+    }
+    
+    if (red) {
+        return;
+    }
+    
+    /* 下面开始是调整红黑树的性质 */
+    /* a delete fixup */
+    
+    rbtree_fix_after_delete(tree, temp);
+    return;
 }
 
 

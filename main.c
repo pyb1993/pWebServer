@@ -73,24 +73,7 @@ int startUp(int port)
     return listen_fd;
 }
 
-/*
- 接受一个connect请求
- */
- void accept_connection(int socket){
-    while (1) {
-        int conn_fd = accept(socket,NULL,NULL);
-        connection_t* c = getIdleConnection();
-        c->fd = conn_fd;
-        c->side = C_DIRECTSTREAM;
-        if(conn_fd == ERROR){
-            ERR_ON((errno != EWOULDBLOCK), "accept");
-            break;
-        }
-        else{
-            plog("new connection conn_fd %d\n", conn_fd);
-        }
-    }
-}
+
 
 // 这个函数处理master进程里面的信号对象
 void singal_handler(int signal)

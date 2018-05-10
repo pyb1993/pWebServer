@@ -132,6 +132,9 @@ typedef struct {
     string path; // localhost
     string root;// ip???
     string host;// rails.com
+    int weight;// 原始权重
+    int max_fails;// 至多失败的次数就不再参与负载均衡,默认是1此
+    msec_t fail_timedout;// 设置的失败之后过多久再进入均衡策略,默认是10s
     uint16_t port;
 } location_t;
 

@@ -9,8 +9,6 @@
 #ifndef config_h
 #define config_h
 
-
-
 #include <stdio.h>
 #include "vector.h"
 #include "hash.h"
@@ -24,10 +22,13 @@ typedef struct config{
     int request_pool_size;
     int connection_pool_size;
     uint32_t timer_resolution;
-    int post_accept_timeout;// 接受到读写请求之后,可以保持多少链接
+    int post_accept_timeout;// 接受到读写请求之后,可以保持多少久
     int keep_alive_timeout;// 一个keep alive的请求可以持续多久
+    int upstream_timeout;
     vector workers;
     hash* locations;// 用来需要转发的path
+    void* loc_name_arr;//暂时 用来在全局传递域名
+    int domain_num;// 需要转发的域名的个数
 } config;
 
 

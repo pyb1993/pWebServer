@@ -29,11 +29,13 @@ typedef struct buffer_s{
 // 链接对象
 // cpool用来分配内存
 typedef struct connection {
+    void* side; // 用来占位的
     int fd;
-    int side;
     void * data;//用来保存request
     event_t* rev;
     event_t* wev;
+    int tries;// 只有在后端系统有效,尝试的次数
+    void* current_upstream;
 } connection_t;
 
 // 链接池对象

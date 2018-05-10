@@ -15,7 +15,7 @@
 #include <fcntl.h>
 
 #define MAX_LOCATION_SZIE 100
-#define LOCATION(_host,_port) {.host = STRING(_host),.port = _port}
+#define LOCATION(_host,_port,_w) {.host = STRING(_host),.port = _port,.weight = _w,.max_fails = 1,.fail_timedout = 10 * 1000}
 
 
 config server_cfg;
@@ -23,28 +23,48 @@ config server_cfg;
 
 hash* create_location_map(){
     static string loc_name_arr[] = {
-        STRING("/rails1"),
-        STRING("/rails2"),
-        STRING("/rails3"),
-        STRING("/rails4"),
-        STRING("/rails5")};
+        STRING("rails/1"),
+        STRING("rails/2"),
+        STRING("rails/3"),
+    };
     
-    static location_t locations[] = {
-        LOCATION("127.0.0.1",3010),
-        LOCATION("127.0.0.1",3011),
-        LOCATION("127.0.0.1",3012),
-        LOCATION("127.0.0.1",3013),
-        LOCATION("127.0.0.1",3014)};
+    // 认为不同的端口对应着不同的服务,weight设置的不一样
+    static location_t locations_1[] = {
+        LOCATION("127.0.0.1",3010,2),
+        LOCATION("127.0.0.1",3011,3),
+        LOCATION("127.0.0.1",3012,4),
+        LOCATION("127.0.0.1",3013,5),
+        LOCATION("127.0.0.1",3014,6)};
+    
+    static location_t locations_2[] = {
+        LOCATION("127.0.0.1",3015,1),
+        LOCATION("127.0.0.1",3016,3),
+        LOCATION("127.0.0.1",3017,2),
+        LOCATION("127.0.0.1",3018,4),
+        LOCATION("127.0.0.1",3019,5)};
+    
+    static location_t locations_3[] = {
+        LOCATION("127.0.0.1",3020,2),
+        LOCATION("127.0.0.1",3021,3),
+        LOCATION("127.0.0.1",3022,4),
+        LOCATION("127.0.0.1",3023,1),
+        LOCATION("127.0.0.1",3024,7)};
+    
+    static location_t* locations[3] = {locations_1,locations_2,locations_3};
 
     static hash_key location_ele_array[MAX_LOCATION_SZIE];
-
+    
     // 将header的东西转换成hashinit能够接受的参数
-    int location_num = sizeof(locations)/sizeof(location_t);
+    int location_num = sizeof(loc_name_arr)/sizeof(string);
+    
+    server_cfg.domain_num = location_num;
+    server_cfg.loc_name_arr = loc_name_arr;
+    
     for(int i = 0; i < location_num; ++i){
         string name = loc_name_arr[i];
         location_ele_array[i].key = name;
         location_ele_array[i].key_hash = hash_key_function(name.c,name.len);
-        location_ele_array[i].value = &locations[i];
+        location_ele_array[i].value = locations[i] ;
     }
     
     // todo fix me:如果需要动态的加载配置,那么要考虑内存的释放,那么需要保留这个hash_initializer
@@ -58,6 +78,7 @@ hash* create_location_map(){
     int ret = hashInit(&localtion_hash_init, location_ele_array,location_num);
     ABORT_ON(ret == ERROR, "init header failed!!!");
     return localtion_hash_init.hash;
+#undef locations_arr
 }
 
 int config_load(){
@@ -67,8 +88,9 @@ int config_load(){
     server_cfg.max_connections = 1000;
     server_cfg.request_pool_size = 2048 + 1024;
     server_cfg.connection_pool_size = 1024 * 3;
-    server_cfg.post_accept_timeout = 0 * 1000;// standard: 15s
-    server_cfg.keep_alive_timeout = 100 * 1000;// keep alive 100ms
+    server_cfg.upstream_timeout = 8 * 1000;// 8 s
+    server_cfg.post_accept_timeout = 30 * 1000;// standard: 15s
+    server_cfg.keep_alive_timeout = 1000 * 1000;// keep alive 100ms
     server_cfg.root_fd = open("/Users/pyb/Documents/workspace/pWebServer/pWebServer", O_RDONLY);
     server_cfg.timer_resolution = 500;
     

@@ -213,6 +213,10 @@ void buffer_append_status_line(version_t version,int status,buffer_t* b)
         case 100: buffer_append_cstring(b,"100 continue");break;
         case 200: buffer_append_cstring(b,"200 OK");break;
         case 404:  buffer_append_cstring(b,"404 not found");break;
+        case 408:  buffer_append_cstring(b,"408 Request Timeout");break;
+        case 502:  buffer_append_cstring(b,"502 Bad Gateway");break;
+        case 503:  buffer_append_cstring(b,"503 Service Temporarily Unavailable");break;
+        case 504:  buffer_append_cstring(b,"504 Gateway Time-out");break;
         default:  buffer_append_cstring(b,"500 Internal Server Error");break;
     }
     buffer_append_cstring(b,"\r\n");
@@ -231,7 +235,11 @@ void append_err_page(buffer_t* b,int err){
     ERR_PAGE(400);
     ERR_PAGE(403);
     ERR_PAGE(404);
+    ERR_PAGE(408);
     ERR_PAGE(500);
+    ERR_PAGE(502);
+    ERR_PAGE(503);
+    ERR_PAGE(504);
     }
     
     append_string_to_buffer(b,&(string){err_page_tail,sizeof(err_page_tail)});

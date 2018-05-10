@@ -77,7 +77,8 @@ http_request_t* create_http_request(){
  */
 void http_close_request(http_request_t* r)
 {
-    plog("close the request %d",r->connection->fd);
+    
+    plog("close the request %d -> %d",r->connection->fd,r->upstream == NULL ? 0 : r->upstream->fd);
     connection_t* c = r->connection;
     if(c != NULL){
         http_close_connection(c);
@@ -123,6 +124,7 @@ void http_clear_request(http_request_t* r)
 
 // 处理response发完以后的请求
 void http_response_done(http_request_t* r){
+    ABORT_ON(r->response_done != true, "error on response done");
     if(r->keep_alive){
         connection_t* c = r->connection;
         plog("reuse the connection  fd(%d)",c->fd);
@@ -130,8 +132,10 @@ void http_response_done(http_request_t* r){
         add_event(c->rev,READ_EVENT,0);//已经写完了,回复到读取的状态
         http_clear_request(r);// 清理请求的状态,等待复用
         c->rev->handler = ngx_http_process_request_line;//重新恢复到处理请求行的状态
-        // 这里需要添加一个定时器,避免大量的空闲链接,同时删除写事件的定时器
-        event_del_timer(c->wev);
+        // 这里需要添加一个定时器,避免大量的空闲链接,同时删除写事件的定时器(因为写事件不一定被加入了定时器)
+        if(c->wev->timer_set){
+            event_del_timer(c->wev);
+        }
         event_add_timer(c->rev, server_cfg.keep_alive_timeout);
     }
     else{
@@ -144,19 +148,32 @@ void handle_response(event_t* wev)
 {
     connection_t* c = wev->data;
     http_request_t* r = c->data;
-    
+
+    if(c->fd == -1){
+        return;
+    }
+
     if(wev->timedout){
         plog("server timed out : send response");
         http_close_request(r);
         return;
     }
-    
-    if(c->fd == -1){
-        return;
-    }
-    
+
     int err = buffer_send(r->send_buffer, c->fd);
     if(err == OK){
+        // 注意顺序非常重要,首先是reponse_done之后就直接结束了
+        if(r->response_done){
+            http_response_done(r);
+            return;
+        }
+        
+        // 本次内容已经回复完了,等待下一次结果
+        if(r->upstream){
+            del_event(wev,WRITE_EVENT,0);
+            return;
+        }
+        
+        // case: porxy模式
         if(r->resource_fd > 0 && !r->response_done)
         {
             //注意response_done的用途,如果已经出错,那么就不执行发送file的操作
@@ -164,8 +181,15 @@ void handle_response(event_t* wev)
             c->wev->handler = handle_response_file;
             handle_response_file(c->wev);
             return;
+        }else{
+            // 不需要发送 file,那么直接结束
+            r->response_done = true;
+            http_response_done(r);
+            return;
         }
-        http_response_done(r);
+        
+        //本次内容已经发完了,关闭写事件
+        del_event(wev,WRITE_EVENT,0);
     }
     else if(err == AGAIN){
         if(wev->timer_set){
@@ -183,21 +207,17 @@ void handle_response_file(event_t* wev)
 {
     connection_t* c = wev->data;
     http_request_t* r = c->data;
-    if(c->fd < 0 ){
-        http_close_request(r);
-        return;
-    }
     
     if(wev->timedout){
         plog("server timed out : send response file");
         r->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(r, r->connection, 404);
-        //http_close_request(r);
         return;
     }
     
     int err = send_file(r);
     if(err == OK){
+        r->response_done = true;
         http_response_done(r);
     }
     else if(err == ERROR){
@@ -251,9 +271,8 @@ void request_handle_body(event_t * rev)
 {
     connection_t* c = rev->data;
     http_request_t* req = c->data;
-    
+    int n;
     if(c->fd == -1){
-        http_close_request(req);
         return;
     }
     
@@ -262,6 +281,15 @@ void request_handle_body(event_t * rev)
         req->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(req, req->connection, 404);
         //http_close_request(req);
+        return;
+    }
+    
+    /* 读取当前请求未解析的数据 */
+    n = buffer_recv(req->recv_buffer, c->fd);
+    /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
+    if (n == ERROR || n == OK) {
+        plog("connection closed by peer when recving the body");
+        http_close_request(req);
         return;
     }
     
@@ -294,8 +322,6 @@ void request_handle_body(event_t * rev)
             // todo: 现在的做法是: 关闭client->server的读事件,等到本次读取到的数据在handle_pass中转发完了之后再继续
             // 可以提高吞吐量的一种做法是: 同时维护client->server的读取状态,和维护handle_pass中server->banckend的发送状态,这样同时进行
             // 需要验证的是: 进行压力测试,观察这个部分是否会成为某个小瓶劲(直觉上不会是优先的瓶劲)。思考在什么样的业务模式下会成为瓶劲。
-            // 不考虑删除定时器,因为切换时间非常短。event_del_timer(rev);
-            //connection_disable_in(r->c);
             b->end = b->begin;//将本次buffer所有数据都转发给backend
             b->begin = b->data;
             if(req->upstream){
@@ -304,7 +330,6 @@ void request_handle_body(event_t * rev)
             }
             return;
         case OK:
-            event_del_timer(rev);
             del_event(rev,READ_EVENT,0);
             if (!req->upstream) {
                 //没有和后台通信的情况
@@ -322,6 +347,7 @@ void request_handle_body(event_t * rev)
                 b->end = b->begin;
                 b->begin = b->data;
                 add_event(req->upstream->wev,WRITE_EVENT,0);//当request处理完成了以后,接下来需要监听front->backend(需要转发最后一次的内容)
+                event_add_timer(req->upstream->wev, server_cfg.post_accept_timeout);// todo fix me, time out
             }
             break;
         default:
@@ -334,7 +360,7 @@ void request_handle_body(event_t * rev)
 
 /*解析buffer里面的header部分,如果阻塞,就加入timer*/
 void request_handle_headers(event_t* rev) {
-   
+    int n;
     connection_t* c = rev->data;
     http_request_t* req = c->data;
     
@@ -347,6 +373,14 @@ void request_handle_headers(event_t* rev) {
     }
     
     if(c->fd == -1){
+        return;
+    }
+    
+    /* 读取当前请求未解析的数据 */
+    n = buffer_recv(req->recv_buffer, c->fd);
+    /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
+    if (n == ERROR || n == OK) {
+        plog("connection closed by peer when parsing the header");
         http_close_request(req);
         return;
     }
@@ -415,18 +449,15 @@ void ngx_http_process_request_line(event_t* rev){
         plog("client timed out");
         req->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(req, req->connection, 404);
-        //http_close_request(req);
         return;
     }
     
     if(c->fd == -1){
-        http_close_request(req);
         return;
     }
     
     /* 读取当前请求未解析的数据 */
     n = buffer_recv(req->recv_buffer, c->fd);
-
     /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
     if (n == ERROR || n == OK) {
         plog("the request done");
@@ -884,6 +915,93 @@ int parse_request_method(char * begin,char * end){
         return M_OPTIONS;
     
     return M_INVALID_METHOD;
+}
+
+/* 针对proxy模式进行转发,将收到的数据发送到后台
+ * 注意这里针对的buffer是recv_buffer
+ *
+ *
+ */
+void http_proxy_pass(event_t* wev){
+    connection_t* upstream = wev->data;
+    if(upstream->fd == -1){
+        return;
+    }
+    
+    http_request_t* r = upstream->data;
+    connection_t* c = r->connection;
+    buffer_t* rb = r->recv_buffer;
+    
+    if(wev->timedout){
+        // 客户端超时,关闭链接,并且
+        plog("timed out when pass %d",upstream);
+        http_close_connection(upstream);
+        construct_err(r, r->connection, 408);
+        return;
+    }
+    
+    int err = buffer_send(rb, upstream->fd);
+    if (err == OK) {
+        buffer_clear(rb);// 本次所有接受到的data已经转发完成了,移除对write事件的监听
+        add_event(c->rev,READ_EVENT,0);//监视client->server,这里有可能出现client断开链接
+        del_event(upstream->wev,WRITE_EVENT,0);
+    } else if (err == ERROR) {
+        // 对方已经关闭了链接,所以我们设置对客户端的回应信息
+        // 上游的链接现在已经关闭,所以我们应该进行处理
+        construct_err(r, r->connection, 503);
+    }
+    
+    if(!upstream->rev->timer_set){
+        // 防止bakcend服务器超时
+        event_add_timer(upstream->rev, server_cfg.upstream_timeout);
+    }
+}
+/* 从上游接受到的数据
+ * 需要将数据转发给客户端
+ * 这里针对的buffer是 send_buffer
+ *
+ */
+void http_recv_upstream(event_t* rev){
+    connection_t* upstream = rev->data;
+    http_request_t* r = upstream->data;
+    if(upstream->fd == -1){
+        return;
+    }
+    
+    if(rev->timedout){
+    // upstream超时,关闭链接,并且
+        plog("timed out when recv upstream %d",upstream->fd);
+        http_close_connection(upstream);
+        r->upstream = NULL;
+        construct_err(r, r->connection, 504);
+        return;
+    }
+    
+    int err = buffer_recv(r->send_buffer, upstream->fd);
+    if(!r->connection->wev->handler){
+        r->connection->wev->handler = handle_response;
+    }
+    // 获取了数据,所以需要转发
+    add_event(r->connection->wev,WRITE_EVENT,0);
+    if(err == OK){
+        // 上游关闭了本链接,发送了一个FIN过来
+        // 正确的姿势是:关闭upstream的链接,但是不关闭请求。因为connection可能还有没有处理完的数据
+        http_close_connection(upstream);
+        r->response_done = true;// 告知 handle_response 可以结束了
+        r->upstream = NULL;
+        return;
+    }else if(err == ERROR){
+        // 上游出现了错误,那么我们需要直接构造返回的数据即可。
+        // 注意这个时候connection可能处于两个状态 1 还在接受客户的数据(上游出错) 2 已经接受完了客户的数据,只等着转发回复到客户端
+        // 无论哪个状态,都会直接关闭链接,返回错误信息
+        construct_err(r, r->connection, 503);
+        return;
+    }
+    
+    // 防止bakcend服务器超时
+    if(!rev->timer_set){
+        event_add_timer(rev, server_cfg.upstream_timeout);
+    }
 }
 
 

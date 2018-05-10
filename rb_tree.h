@@ -42,7 +42,7 @@ typedef struct rbtree_s{
 #define rbt_is_red(node)            ((node)->color)
 #define rbt_is_black(node)          (!rbt_is_red(node))
 /* 复制某个节点的颜色 */
-#define rbt_copy_color(n1, n2)      (n1->color = n2->color)
+#define rbt_copy_color(n1, n2)      ((n1)->color = (n2)->color)
 /* 初始化红黑树的哨兵节点,空叶子结点必须是黑色的*/
 #define rbtree_sentinel_init(node)  rbt_black(node)
 
@@ -53,7 +53,7 @@ typedef struct rbtree_s{
 (tree)->insert = i     \
 
 #define is_left(node)((node) == (node)->parent->left)
-#define is_right(node)(!is_left(node))
+#define is_right(node)((node) == (node)->parent->right)
 #define father(node)((node)->parent)
 #define grand_father(node)((node)->parent->parent)
 void rbtree_insert_timer_value(rbtree_node_t *temp, rbtree_node_t *node,rbtree_node_t *sentinel);

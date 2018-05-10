@@ -13,6 +13,7 @@
 #include "server.h"
 #include "pool.h"
 #include "http.h"
+#include "upstream_server_module.h"
 #include "commonUtil.h"
 
 connection_pool_t connection_pool;
@@ -31,7 +32,6 @@ void connectionPoolInit(int max_connections){
         for(int k = 0; k < 8; ++k){
             // 注意这里要先保存next的值,否则会被覆盖
             connection_t* next_con = ((chunk_slot*)con)->next;
-            //con->fd = -1;
             con->rev = &r_events[idx];
             con->wev = &w_events[idx];
             con->rev->data = con;
@@ -68,12 +68,18 @@ connection_t* getIdleConnection(){
 
 
 /*
- 关闭一个链接
+ * 关闭一个链接
+ * 第一次判断是有必要的,因为可能会有读写两个事件同时触发队列里面,可能第一个事件已经导致这个链接被删除了
  */
 void http_close_connection(connection_t* c)
 {
-    close(c->fd);//读写事件自动被删除
+    if(c->fd <= 0){
+        return;
+    }
 
+    plog("close connection %d ",c->fd);
+    close(c->fd);//读写事件自动被删除
+    
     // 删除相关的定时器事件
     if (c->rev->timer_set) {
         event_del_timer(c->rev);
@@ -82,13 +88,21 @@ void http_close_connection(connection_t* c)
     if (c->wev->timer_set) {
         event_del_timer(c->wev);
     }
-
+    
+    // 如果是upstream 链接,要调用这个函数
+    if(((http_request_t*)c->data)->upstream == c){
+        free_upstream(c->current_upstream);
+    }
+    
     c->data = NULL;
     c->fd = -1;
     c->rev->active = false;
     c->wev->active = false;
+    c->current_upstream = NULL;
     
-    poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面
+    
+    // 注意这里有一个bug,因为放回free链表里会导致fd被next占用
+    poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面,注意这里有一个bug,因为
 }
 
 
@@ -111,6 +125,7 @@ buffer_t* createBuffer(memory_pool* pool){
 
 int buffer_recv(buffer_t* buffer, int fd)
 {
+    plog("recv buffer(fd:%d)",fd);
     while (!buffer_full(buffer))
     {
         int margin = (int)(buffer->limit - buffer->end);
@@ -132,8 +147,8 @@ int buffer_recv(buffer_t* buffer, int fd)
             plog("error on buffer recv %d fd:%d",errno,fd);
             return ERROR;
         }
-        //read_n += len;
         buffer->end += len;
+        break;
     };  // We may have not read all data
     return AGAIN;
 }

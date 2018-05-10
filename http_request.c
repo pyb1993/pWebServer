@@ -10,6 +10,7 @@
 #include "server.h"
 #include "event.h"
 #include "module.h"
+#include "upstream_server_module.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -31,46 +32,37 @@ static void process_extension(http_request_t* r){
 }
 
 
-
-
-static void http_init_upstream_connection(connection_t * upstream){
+/*初始化upstream connection的各个属性*/
+static void init_upstream_connection(http_request_t* r,connection_t * upstream,int fd){
     event_t *wev = upstream->wev;
     event_t *rev = upstream->rev;
     wev->timedout = 0;
+    upstream->side = C_UPSTREAM;
     wev->handler = http_proxy_pass;//将 recv buffer里面的数据 转发 到backend
     upstream->rev->handler = http_recv_upstream;//第一个步骤是分配相关的buffer
+    upstream->fd = fd;
+    upstream->data = r;
+    set_nonblocking(upstream->fd);
     add_event(rev,READ_EVENT,0);//监听读事件,这个事件应该一直开启
 }
 
 
 // 打开一个upstream connection,根据loc来实现
-static connection_t* open_upstream_connection(http_request_t* r, location_t* loc){
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    ERR_ON(fd == -1, "create socket error");
-    struct sockaddr_in addr;
-    bzero(&addr, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(loc->port);
-    int success = inet_pton(AF_INET, loc->host.c, &addr.sin_addr);
-    if (success <= 0) {
+static connection_t* open_upstream_connection(http_request_t* r, int fd){
+    if(fd == -1){
+        construct_err(r, r->connection, 502);
         return NULL;
     }
-    
-    int err = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
-    if (err < 0) {
-        plog("err on connec backend,fd:%d",r->connection->fd);
+    plog("open upstream connection %d->%d",r->connection->fd,fd);
+    connection_t* upstream = getIdleConnection();
+    ERR_ON(upstream == NULL, "get upstream failed");
+    if(upstream == NULL){
         return NULL;
     }
-    connection_t* c = getIdleConnection();
-    c->side = C_UPSTREAM;
-    set_nonblocking(c->fd);
-    
-    /*
-     add_event(rev)
-     add_timer
-     监听backend -> server的数据,一旦有数据,就需要写入request的send_buffer里面,这样connection就可以send给client
-     */
-    return r->upstream;
+
+    init_upstream_connection(r,upstream,fd);
+    r->upstream->tries++;
+    return upstream;
 }
 
 static char * process_abs_path(http_request_t* r){
@@ -82,8 +74,14 @@ static char * process_abs_path(http_request_t* r){
         real_path = "./";
     }
     else{
+        // 现在还没有开始转发请求,所以修改这个没有什么问题
+        int skip_len = 0;
         real_path = uri->abs_path.c;
-        *(real_path + uri->abs_path.len + uri->extension.extension_str.len + 1) = 0;
+        skip_len = (int)uri->abs_path.len;
+        if(uri->extension.extension_str.c != NULL){
+            skip_len += uri->extension.extension_str.len + 1;
+        }
+        real_path[skip_len] = 0;
     }
 
     return real_path;
@@ -98,11 +96,12 @@ int request_process_uri(http_request_t* r){
     char* real_path = process_abs_path(r);
     location_t* loc;
 
-    if((loc = hash_find(server_cfg.locations, uri->abs_path.c, uri->abs_path.len))){
+    if(hash_find(server_cfg.locations, uri->abs_path.c, uri->abs_path.len) != NULL){
         // need create a new connection
         // need to change the send buffer
         ABORT_ON(r->upstream, "error on not null upstream");
-        r->upstream = open_upstream_connection(r, loc);
+        int fd = get_upstream(r, &uri->abs_path);
+        r->upstream = open_upstream_connection(r, fd);
     }else{
         // 不需要转发,那么直接寻找对应的目录下的文件
         int fd = server_cfg.root_fd;
@@ -116,6 +115,7 @@ int request_process_uri(http_request_t* r){
         
         struct stat st;
         fstat(fd, &st);
+        
         if(S_ISDIR(st.st_mode)){
             // 如果对应打开的是一个目录,那么就要打开这个目录下面index.html的文件
             int tmp_fd = fd;
@@ -127,11 +127,10 @@ int request_process_uri(http_request_t* r){
                 construct_err(r, r->connection, 403);
                 return ERROR;
             }
-            
-            fstat(fd, &st);
-            r->resource_fd = fd;
-            r->resource_len = st.st_size;
         }
+        fstat(fd, &st);
+        r->resource_fd = fd;
+        r->resource_len = st.st_size;
     }
 
     // process the extension
@@ -155,7 +154,7 @@ int parse_request_body_identity(http_request_t* r) {
         return OK;
     }
     
-    int recieved = max(r->content_length - r->body_received,buffer_size(b));
+    int recieved = min(r->content_length - r->body_received,buffer_size(b));
     r->body_received += recieved;
     b->begin += recieved;
     

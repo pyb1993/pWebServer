@@ -12,6 +12,4 @@
 #include "event.h"
 extern module_t kqueue_module;
 
-
-
 #endif /* kqueue_event_module_h */

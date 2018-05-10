@@ -39,7 +39,6 @@ int kequeue_event_init(){
 // kqueue模块用来添加事件的函数
 int kqueue_add_event (event_t *ev, int event, uint flags)
 {
-    
     if(ev->active) {return OK;}
     ev->active = true;
     connection_t* c = ev->data;
@@ -69,8 +68,10 @@ int kqueue_del_event (event_t *ev, int event, uint flags)
     
     connection_t* c = ev->data;
     int fd = c->fd;
-
-
+    if(ev->timer_set){
+        event_del_timer(ev);
+    }
+    
     uint32_t events = (uint32_t) event;
     struct kevent changes[1];
     EV_SET(&changes[0], fd, events, EV_DELETE, 0, 0, c);

@@ -16,12 +16,14 @@
 #include <netinet/in.h>
 
 int event_process_init();
+int upstream_process_init();
+int upstream_module_init();
 
 typedef struct p_module{
     string name;
     void *ctx;//指向这一类模块的通用接口结构体,用来在解析配置的时候进行各种初始化
     int (*process_init)();//在worker初始化的时候需要调用这个函数
-    int(*module_init)();//在所有模块初始化的时候调用这个函数,主要处理master关于负载均衡,共享内存的共享锁等数据,暂时没有
+    int(*module_init)();//在模块初始化的时候调用这个函数,主要处理master关于负载均衡,共享内存的共享锁等数据,暂时没有
 } module_t;
 
 /****event actions t结构,用来定义相应事件模块的所有事件操作的方法***********/
@@ -43,5 +45,6 @@ typedef struct {
 } event_module_t;
 
 extern module_t event_module;
+extern module_t upstream_module;
 extern event_actions_t event_actions;
 #endif /* p_event_h */
