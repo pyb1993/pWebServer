@@ -13,6 +13,7 @@
 #include "connection.h"
 #include "commonUtil.h"
 #include "header.h"
+#include "upstream_server_module.h"
 
 /* 用来初始化一个http链接(connection) *
  设置对应的事件回调函数
@@ -91,6 +92,12 @@ void http_close_request(http_request_t* r)
         close(r->resource_fd);
         r->resource_fd = -1;
     }
+    
+    // 如果是upstream 链接,且链接成功,那么要调用这个函数
+    if(r->cur_upstream){
+        free_upstream(r->cur_upstream);
+    }
+    
     
     freePool(r->pool);//连request自己都被释放了
 }

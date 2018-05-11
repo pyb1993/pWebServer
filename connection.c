@@ -89,18 +89,10 @@ void http_close_connection(connection_t* c)
         event_del_timer(c->wev);
     }
     
-    // 如果是upstream 链接,要调用这个函数
-    if(((http_request_t*)c->data)->upstream == c){
-        free_upstream(c->current_upstream);
-    }
-    
     c->data = NULL;
     c->fd = -1;
     c->rev->active = false;
     c->wev->active = false;
-    c->current_upstream = NULL;
-    
-    
     // 注意这里有一个bug,因为放回free链表里会导致fd被next占用
     poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面,注意这里有一个bug,因为
 }

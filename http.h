@@ -107,6 +107,7 @@ typedef struct http_request_s{
     connection_t* connection;
     connection_t* upstream;
     string request_line;
+    string ip;
     uri_t uri;
     version_t version;
     method_t method;
@@ -122,6 +123,7 @@ typedef struct http_request_s{
     int resource_off;
     int resource_fd;
     long resource_len;
+    void* cur_upstream;
     uint8_t response_done:1;
     uint8_t keep_alive: 1;
 } http_request_t;

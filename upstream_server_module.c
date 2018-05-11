@@ -34,10 +34,10 @@ int init_before_round(http_request_t* r, string* target_domain,upsream_server_ar
     // 找到对应的域名, todo: hash实现
     int i = 0;
     for(i = 0; i < n; ++i){
-        servers_of_domain++;
         if( stringEq(target_domain, servers_of_domain->domain_name)){
             break;
         }
+        servers_of_domain++;
     }
     ERR_ON(i >= n, "?????");
 
@@ -70,22 +70,22 @@ int init_before_round(http_request_t* r, string* target_domain,upsream_server_ar
  在挑选一次之后,需要尝试链接该服务器
  */
 int try_connect(upsream_server_t* us){
-        int fd = socket(AF_INET, SOCK_STREAM, 0);
-        ERR_ON(fd == -1, "try connecting upstream server failed");
-        struct sockaddr_in addr;
-        bzero(&addr, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(us->location->port);
-        int success = inet_pton(AF_INET, us->location->host.c, &addr.sin_addr);
-        if (success <= 0) {
-            return -1;
-        }
-        
-        int err = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
-        if (err < 0) {
-            return -1;
-        }
-    return fd;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    ERR_ON(fd == -1, "try connecting upstream server failed");
+    struct sockaddr_in addr;
+    bzero(&addr, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(us->location->port);
+    int success = inet_pton(AF_INET, us->location->host.c, &addr.sin_addr);
+    if (success <= 0) {
+        return -1;
+    }
+    
+    int err = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
+    if (err < 0) {
+        return -1;
+    }
+return fd;
 }
 
 
@@ -99,7 +99,7 @@ upsream_server_t* get_server_by_round_once(upsream_server_arr_t* server_domain){
     uintptr_t* tried = server_domain->tried;
     
     upsream_server_t* best = NULL;
-    
+    upsream_server_t* server;
     for(i = 0; i < server_domain->nelts; ++i){
         /* 计算当前后端服务器在位图中的位置 n,以及n那个位置的m */
         
@@ -115,7 +115,7 @@ upsream_server_t* get_server_by_round_once(upsream_server_arr_t* server_domain){
           且距离检查的时间还没有吵过等待时间,那么就直接忽略这个服务器
          */
         
-        upsream_server_t* server = server_domain->upstream_server + i;
+        server = server_domain->upstream_server + i;
         if (server->max_fails
             && server->fails >= server->max_fails
             && (int)(current_msec - server->checked) <= (int)server->fail_timeout)
@@ -208,17 +208,110 @@ int get_server_by_round(http_request_t*r,string* domain){
     int tries = 0; //尝试的次数
     while(tries < server_domain->nelts){
         upsream_server_t* us = get_server_by_round_once(server_domain);
+        if(us == NULL){
+            tries++;
+            continue;
+        }
+        
         int fd = try_connect(us);
-        if(fd > 0) {return fd;}
+        if(fd > 0) {
+            r->cur_upstream = us;
+            us->state = UPSTREAM_CONN_SUC;
+            return fd;}
         else{
             //测试失败,那么需要重新尝试
+            r->cur_upstream = NULL;
             us->state = UPSTREAM_CONN_FAIL;
             free_server_after_round_select(us);
         }
-        plog("err on connec backend,fd:%d",r->connection->fd);
+        plog("try to connect backend,fd:%d",r->connection->fd);
         tries++;
     }
     return -1;
 }
+
+/*----------------- 一致性hash的分界线 -------------------------------*/
+
+/*利用一致性hash来实现
+  1 首先根据权重初始化虚拟节点,计算总权重 w = w1 + w2 + w3
+  2 然后计算真实节点的数量是 num
+    if num < 8 那么虚拟节点的总数定为 vn = 64(一个uint64_t搞定)
+    else 虚拟节点的总数定位 vn = num * 8
+  3 接下来 计算每一个真实节点对应的虚拟节点的数量
+     假设权重是 wi,那么 vni = ceil(vn * wi / w)
+     这样最后的vni的和可能大于n,但是没有关系,以sum(vni)为准
+  4 在 3 的过程中,计算每一个虚拟节点的hashcode值,
+    计算的方式是: 用当前节点的ip/一个随机数作为基本地址
+    然后分别构造出虚拟节点的数值,为 0,1,2...vni
+    得到的字符串是ip/random/0,ip/random/1这样进行hash
+    将结果排入数组,然后将数组排序
+ 
+  --------以上是初始化过程---------------
+  接下来是二分查找过程
+  如果节点的情况没有发生变化,那么每次走只需进行二分查找,就可以得到对应的虚拟节点
+  如果节点的情况已经发生了变化,比如某个节点挂掉的次数已经超过了max_fail + 2次,那么就认为
+  该节点已经down了,这种情况下,需要我们重新对节点进行初始化
+ */
+
+int init_before_consistent_hash_get(http_request_t* r, string* target_domain,upsream_server_arr_t** target_server_of_domain){
+    int ret = init_before_round(r, target_domain, target_server_of_domain);
+    int hcode = hash_key_function(r->ip.c, r->ip.len);//对应客户的ip
+    ERR_ON(ret == ERROR,"???" );
+    /*接下来需要进行初始化*/
+    upsream_server_arr_t* server_of_domain = *target_server_of_domain;
+    if(server_of_domain->init_state == IDLE){
+        /*开始按照上面的算法进行初始化初始化*/
+    
+    }
+    
+    
+    return OK;
+
+}
+
+
+/*
+ 初始化之后,按照二分查找获取对应的server
+ 
+ 
+ */
+int get_server_by_consistent_hash(http_request_t* r,string* domain){
+    upsream_server_arr_t* server_domain;
+    int err = init_before_consistent_hash_get(r, domain,&server_domain);
+    if(err != OK){
+        plog("err on init load balance");
+        return -1;
+    }
+    
+    return ERROR;
+}
+
+/*一次二分查找的过程
+  找到第一个大于x的
+ 
+ 
+ */
+upsream_server_arr_t* get_server_by_consistent_hash_once(upsream_server_arr_t* server_domain){
+    consistent_hash_t* cycle = server_domain->cycle;
+    vector* vec =  &cycle->cycle;
+    
+    int left = 0;
+    int right = vec->used - 1;
+    int mid = (left + right) >> 1;
+    
+    for(int i = 0; i < vec->used; ++i){
+        consistent_hash_vnode_t* ch = vectorAt(vec, mid);
+        if(ch->hashcode < )
+
+    }
+    
+
+
+
+
+}
+
+
+
 
 

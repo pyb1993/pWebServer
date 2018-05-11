@@ -61,7 +61,6 @@ static connection_t* open_upstream_connection(http_request_t* r, int fd){
     }
 
     init_upstream_connection(r,upstream,fd);
-    r->upstream->tries++;
     return upstream;
 }
 

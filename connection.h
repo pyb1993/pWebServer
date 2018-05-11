@@ -34,8 +34,6 @@ typedef struct connection {
     void * data;//用来保存request
     event_t* rev;
     event_t* wev;
-    int tries;// 只有在后端系统有效,尝试的次数
-    void* current_upstream;
 } connection_t;
 
 // 链接池对象

@@ -23,6 +23,12 @@
 struct domain_upsream_server_arr_t;
 extern struct _domain_upstream_server_arr servers;
 
+
+typedef enum {
+    IDLE,
+    INIT
+} chash_state_type;
+
 /*ip地址以及相应的参数(effective_weight,current_weight,fails,accessed等数据)
   这个结构可以支持两种类型的负载均衡.平滑加权轮训以及一致性hash
   对于第二种,需要依靠虚拟节点和二分查找进行选择,同时要依靠status_changed函数来判断这个节点是否已经down了
@@ -32,8 +38,8 @@ typedef struct upstream_server{
     int weight;//设置的weight
     int effective_weight;//基础权重,对应当前服务器的运行状况
     int current_weight;//当前实际的权重
-    int fails;//到现在为止失败的次数
     bool status_changed;//用来在一致性hash的时候进行判断是否需要重新初始化
+    int fails;//失败的次数
     int max_fails;//最大可以尝试的失败次数
     int state;//链接后端服务器的情况
     msec_t checked;
@@ -41,6 +47,18 @@ typedef struct upstream_server{
     location_t* location;
 } upsream_server_t;
 
+/*一致性hash所需要的虚拟节点结构体定义*/
+typedef struct _consistent_hash_vnode{
+    int hashcode;// 虚拟节点的值
+    upsream_server_t* rnode;//虚拟节点对应的真实节点
+}consistent_hash_vnode_t;
+
+/*定义一致性hash需要的信息*/
+typedef struct consistent_hash_data{
+    vector cycle;
+    int vnodes;//虚拟节点的数量
+    
+} consistent_hash_t;
 
 /*这个结构是某一个域名负载均衡下的所有server*/
 typedef struct upstream_server_arr{
@@ -50,6 +68,8 @@ typedef struct upstream_server_arr{
     int nelts;
     uintptr_t data;// 用来做小数量情况下的位图的存储空间
     uintptr_t* tried;// 指向位图的存储空间
+    chash_state_type init_state;//用来标识一致性hash的情况的初始化情况
+    consistent_hash_t* cycle;//存放一致性hash的数据
 } upsream_server_arr_t;
 
 /*该结构是记录负载均衡的所有域名对应的upstream_server_ip_list*/

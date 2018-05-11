@@ -56,7 +56,7 @@ int upstream_process_init(){
         server_arr->upstream_server = (upsream_server_t*)malloc(server_arr->nelts * sizeof(upsream_server_t));
         string* domain_name = (string*)server_cfg.loc_name_arr + i;
         server_arr->domain_name = domain_name;
-
+        server_arr->init_state = IDLE;
         location_t* loc = hash_find(server_cfg.locations, domain_name->c, domain_name->len);// 获取到loc对象数组,并用这个数组来初始化下面的对象
         for(int j = 0; j < server_arr->nelts; ++j){
             // 初始化每一个 ip对应的数据
