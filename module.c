@@ -53,6 +53,7 @@ int upstream_process_init(){
     for(int i = 0; i < servers.nelts; ++i){
         upsream_server_arr_t* server_arr = servers.server_ip_arr + i;
         server_arr->nelts = 5;// 这里写死; todo以后依靠配置文件来定
+        server_arr->init_state = IDLE;//写好初始化状态
         server_arr->upstream_server = (upsream_server_t*)malloc(server_arr->nelts * sizeof(upsream_server_t));
         string* domain_name = (string*)server_cfg.loc_name_arr + i;
         server_arr->domain_name = domain_name;
@@ -74,14 +75,13 @@ int upstream_process_init(){
     }
     
     // 接下来要初始化几个结构,根据负载均衡参数设置的不同,选择不一样的context
-    if(1){
+    if(server_cfg.load_balance == ROUND_MODE){
         plog("round load balance module is selected\n");
         upstream_module.ctx = &upstream_server_round_module_ctx;
-    }else{
-        assert(0);
+    }else if(server_cfg.load_balance == CONSISTENT_HASH){
+        plog("consistent hash load balance module is selected\n");
         upstream_module.ctx = &upstream_server_chash_module_ctx;
     }
-    
     return OK;
 };
 

@@ -267,6 +267,7 @@ int construct_err(http_request_t* r,connection_t* c, int err) {
     c->wev->handler = handle_response;
     r->status = err;
     r->response_done = true;
+    r->keep_alive = false;// 出错的情况,取消keep_alive
     return OK;
 }
 

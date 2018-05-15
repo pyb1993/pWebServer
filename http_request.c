@@ -32,35 +32,17 @@ static void process_extension(http_request_t* r){
 }
 
 
-/*初始化upstream connection的各个属性*/
-static void init_upstream_connection(http_request_t* r,connection_t * upstream,int fd){
-    event_t *wev = upstream->wev;
-    event_t *rev = upstream->rev;
-    wev->timedout = 0;
-    upstream->side = C_UPSTREAM;
-    wev->handler = http_proxy_pass;//将 recv buffer里面的数据 转发 到backend
-    upstream->rev->handler = http_recv_upstream;//第一个步骤是分配相关的buffer
-    upstream->fd = fd;
-    upstream->data = r;
-    set_nonblocking(upstream->fd);
-    add_event(rev,READ_EVENT,0);//监听读事件,这个事件应该一直开启
-}
+
 
 
 // 打开一个upstream connection,根据loc来实现
-static connection_t* open_upstream_connection(http_request_t* r, int fd){
-    if(fd == -1){
-        construct_err(r, r->connection, 502);
-        return NULL;
-    }
-    plog("open upstream connection %d->%d",r->connection->fd,fd);
+static connection_t* open_upstream_connection(http_request_t* r){
+    plog("get upstream connection %d",r->connection->fd);
     connection_t* upstream = getIdleConnection();
     ERR_ON(upstream == NULL, "get upstream failed");
     if(upstream == NULL){
         return NULL;
     }
-
-    init_upstream_connection(r,upstream,fd);
     return upstream;
 }
 
@@ -93,14 +75,15 @@ static char * process_abs_path(http_request_t* r){
 int request_process_uri(http_request_t* r){
     uri_t* uri = &r->uri;
     char* real_path = process_abs_path(r);
-    location_t* loc;
 
     if(hash_find(server_cfg.locations, uri->abs_path.c, uri->abs_path.len) != NULL){
-        // need create a new connection
-        // need to change the send buffer
         ABORT_ON(r->upstream, "error on not null upstream");
-        int fd = get_upstream(r, &uri->abs_path);
-        r->upstream = open_upstream_connection(r, fd);
+        /* 将在这里try_connect_upstream里面设置回调,在回调里面处理链接的成功与否 */
+        r->upstream = open_upstream_connection(r);
+        if(r->upstream == NULL){
+            int x = 20;
+        }
+        try_connect_upstream(r, &uri->abs_path);//在这里设置回调函数
     }else{
         // 不需要转发,那么直接寻找对应的目录下的文件
         int fd = server_cfg.root_fd;
@@ -114,7 +97,6 @@ int request_process_uri(http_request_t* r){
         
         struct stat st;
         fstat(fd, &st);
-        
         if(S_ISDIR(st.st_mode)){
             // 如果对应打开的是一个目录,那么就要打开这个目录下面index.html的文件
             int tmp_fd = fd;
@@ -141,6 +123,7 @@ int request_process_uri(http_request_t* r){
     return OK;
 }
 
+
 /*
  可能的情况为:没有body,直接返回ok
  存在body,而且读到了完整body(或超过),返回OK
@@ -163,4 +146,6 @@ int parse_request_body_identity(http_request_t* r) {
         return AGAIN;
     }
 }
+
+
 

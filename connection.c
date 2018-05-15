@@ -94,7 +94,7 @@ void http_close_connection(connection_t* c)
     c->rev->active = false;
     c->wev->active = false;
     // 注意这里有一个bug,因为放回free链表里会导致fd被next占用
-    poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面,注意这里有一个bug,因为
+    poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面,注意这里有一个bug
 }
 
 
@@ -168,7 +168,7 @@ int buffer_send(buffer_t* buffer, int fd)
             else if(errno == EINTR){
                 continue;
             }
-            plog("error on send buffer %d,fd :#d",errno,fd);
+            plog("error on send buffer %d,fd :%d",errno,fd);
             return ERROR;
         }
         //sent += len;

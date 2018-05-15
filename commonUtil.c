@@ -23,6 +23,10 @@ int p_abs(int x){
     return x < 0 ? -x : x;
 }
 
+int p_ceil(float x){
+    return ceil(x);
+}
+
 void plog(const char* format, ...) {
     FILE* log_file = fopen(LOG_DIR "pserver.log", "a+");
     if (log_file == NULL) {
@@ -32,7 +36,6 @@ void plog(const char* format, ...) {
     }
     
     fprintf(log_file, "[pid: %5d]",getpid());
-    
     va_list args;
     va_start(args, format);
     vfprintf(log_file, format, args);

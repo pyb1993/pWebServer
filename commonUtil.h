@@ -14,4 +14,5 @@ int max(int x, int y);
 int min(int x,int y);
 int p_abs(int x);
 void plog(const char* format, ...);
+int p_ceil(float x);
 #endif /* commonUtil_h */

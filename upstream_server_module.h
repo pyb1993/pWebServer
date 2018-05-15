@@ -17,7 +17,7 @@
 #define UPSTREAM_CONN_FAIL 0
 #define UPSTREAM_CONN_SUC 1
 
-#define get_upstream(r,domain) (((upsream_server_module_t*)upstream_module.ctx)->get(r,domain))
+#define try_connect_upstream(r,domain) (((upsream_server_module_t*)upstream_module.ctx)->get(r,domain))
 #define free_upstream(us) (((upsream_server_module_t*)upstream_module.ctx)->free(us))
 
 struct domain_upsream_server_arr_t;
@@ -26,7 +26,8 @@ extern struct _domain_upstream_server_arr servers;
 
 typedef enum {
     IDLE,
-    INIT
+    MODIFIED,
+    INIT_DONE
 } chash_state_type;
 
 /*ip地址以及相应的参数(effective_weight,current_weight,fails,accessed等数据)
@@ -42,20 +43,20 @@ typedef struct upstream_server{
     int fails;//失败的次数
     int max_fails;//最大可以尝试的失败次数
     int state;//链接后端服务器的情况
-    msec_t checked;
+    msec_t last_failed;//最后一次失败时间
     msec_t fail_timeout;
     location_t* location;
 } upsream_server_t;
 
 /*一致性hash所需要的虚拟节点结构体定义*/
 typedef struct _consistent_hash_vnode{
-    int hashcode;// 虚拟节点的值
+    uint32_t hashcode;// 虚拟节点的值
     upsream_server_t* rnode;//虚拟节点对应的真实节点
 }consistent_hash_vnode_t;
 
 /*定义一致性hash需要的信息*/
 typedef struct consistent_hash_data{
-    vector cycle;
+    consistent_hash_vnode_t* cycle;
     int vnodes;//虚拟节点的数量
     
 } consistent_hash_t;
@@ -86,12 +87,15 @@ typedef struct _upstream_module_server_ctx{
 
 
 /*  在本次加权轮训之前挑选之前进行初始化 */
-int init_before_round(http_request_t* r, string* target_domain,upsream_server_arr_t**);
+int init_before_round(http_request_t* r, string* target_domain);
 
 /* 按照加权轮训算法来进行挑选 */
-int get_server_by_round(http_request_t*r,string* domain);
+void get_server_by_round(http_request_t*r,string* domain);
 
 void free_server_after_round_select(upsream_server_t* us);
+
+// 按照一致性hash算法来获取
+void get_server_by_consistent_hash(http_request_t*r,string* domain);
 
 /*upstream 加权轮询模块通用context*/
 extern upsream_server_module_t upstream_server_round_module_ctx;
@@ -99,4 +103,6 @@ extern upsream_server_module_t upstream_server_round_module_ctx;
 /*upstream 一致性hash模块通用context*/
 extern upsream_server_module_t upstream_server_chash_module_ctx;
 
+/*** 设置upstream对应的回调函数 ***/
+void init_upstream_connection(http_request_t* r,connection_t * upstream,int fd);
 #endif /* upstream_server_module_h */

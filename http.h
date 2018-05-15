@@ -107,7 +107,6 @@ typedef struct http_request_s{
     connection_t* connection;
     connection_t* upstream;
     string request_line;
-    string ip;
     uri_t uri;
     version_t version;
     method_t method;
@@ -122,10 +121,12 @@ typedef struct http_request_s{
     int body_received;
     int resource_off;
     int resource_fd;
+    int upstream_tries;//尝试链接后端服务器的次数
     long resource_len;
-    void* cur_upstream;
     uint8_t response_done:1;
-    uint8_t keep_alive: 1;
+    uint8_t keep_alive:1;
+    void* cur_upstream;
+    void* cur_server_domain;//当前请求对应的domain
 } http_request_t;
 
 // 用来描述一个后台进程的url,协议,host(ip),port
@@ -162,4 +163,5 @@ void http_recv_upstream(event_t* rev);
 void handle_response(event_t* wev);
 int construct_err(http_request_t* r,connection_t* c, int err);
 void construct_response(http_request_t* req);
+void process_connection_result_of_upstream(event_t* wev);
 #endif /* http_h */

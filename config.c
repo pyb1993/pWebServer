@@ -85,15 +85,14 @@ int config_load(){
     server_cfg.port = 3001;
     server_cfg.worker_num = 1;
     server_cfg.daemon = 1;
-    server_cfg.max_connections = 1000;
-    server_cfg.request_pool_size = 2048 + 1024;
-    server_cfg.connection_pool_size = 1024 * 3;
+    server_cfg.max_connections = 4096;
+    server_cfg.request_pool_size = 4096;
     server_cfg.upstream_timeout = 8 * 1000;// 8 s
-    server_cfg.post_accept_timeout = 30 * 1000;// standard: 15s
-    server_cfg.keep_alive_timeout = 1000 * 1000;// keep alive 100ms
+    server_cfg.post_accept_timeout = 8 * 1000;// standard: 15s
+    server_cfg.keep_alive_timeout = 1000 * 1000;// keep alive 30s
     server_cfg.root_fd = open("/Users/pyb/Documents/workspace/pWebServer/pWebServer", O_RDONLY);
     server_cfg.timer_resolution = 500;
-    
+    server_cfg.load_balance = ROUND_MODE;
     // 初始化locations
     server_cfg.locations = create_location_map();
     vectorInit(&server_cfg.workers,server_cfg.worker_num,sizeof(struct worker_t));

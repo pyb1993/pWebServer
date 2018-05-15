@@ -34,6 +34,7 @@ typedef struct connection {
     void * data;//用来保存request
     event_t* rev;
     event_t* wev;
+    uint32_t ip;
 } connection_t;
 
 // 链接池对象

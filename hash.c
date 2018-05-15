@@ -237,6 +237,21 @@ void* hash_find(hash* h, char * name, size_t len){
     return NULL;
 }
 
+/* 输入是ip的整数形式,需要将这个整数变成更随机的hashcode
+   否则如果ip都来自同一个局域网,那么可能很接近,导致被很集中的分配到一个区域
+   这里就简单的进行一个随机算法,没有什么严格证明
+ */
+uint32_t hash_code_of_ip_integer(uint32_t x)
+{
+    static uint32_t random_salt[17] = {1451352145,453454322,3454325,3542345,1214225,75243532,45324515,3445665,1477235,4532543,7855743,4114345,132145,14533432,958930665,34455,25484754};
+    uint32_t hashcode = x;
+    while(x > 0) {
+        hashcode = (uint32_t)(hashcode * 113 + random_salt[hashcode % 17]);/* hash 函数 */
+        x = (x >> 1);
+    }
+    return hashcode;
+}
+
 //转换并且拷贝
 void strlow(u_char *dst, u_char *src, size_t n)
 {

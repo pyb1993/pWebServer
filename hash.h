@@ -53,5 +53,6 @@ void strlow(u_char *dst, u_char *src, size_t n);
 uint hash_key_function(char *data, size_t len);
 int hashInit(hash_initializer *hinit, hash_key *names, uint nelts);
 void* hash_find(hash* h, char * name, size_t len);
+uint32_t hash_code_of_ip_integer(uint32_t x);
 
 #endif /* hash_h */

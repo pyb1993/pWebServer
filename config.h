@@ -13,6 +13,9 @@
 #include "vector.h"
 #include "hash.h"
 
+#define ROUND_MODE 0
+#define CONSISTENT_HASH 1
+
 typedef struct config{
     int port;
     int worker_num;
@@ -20,7 +23,6 @@ typedef struct config{
     int root_fd;
     int max_connections;
     int request_pool_size;
-    int connection_pool_size;
     uint32_t timer_resolution;
     int post_accept_timeout;// 接受到读写请求之后,可以保持多少久
     int keep_alive_timeout;// 一个keep alive的请求可以持续多久
@@ -29,6 +31,7 @@ typedef struct config{
     hash* locations;// 用来需要转发的path
     void* loc_name_arr;//暂时 用来在全局传递域名
     int domain_num;// 需要转发的域名的个数
+    int load_balance; // 负载均衡的模式
 } config;
 
 

@@ -10,6 +10,8 @@
 #include "server.h"
 #include "commonUtil.h"
 #include "http.h"
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 // listenning socket的回调函数
 /*
@@ -27,10 +29,14 @@ void event_accept(event_t *ev)
     
     while(1)
     {
-        //接收客户端连接
-        int conn_fd = accept(listenning->fd,NULL,NULL);//这里是可能阻塞的
+        // 接收客户端连接
+        struct sockaddr_in client;
+        socklen_t c_len = sizeof(client);
+
+        int conn_fd = accept(listenning->fd,(struct sockaddr*)&client,&c_len);//这里是可能阻塞的
         if(conn_fd == -1){
-            ERR_ON((errno != EWOULDBLOCK), "accept");
+            ERR_ON((errno != EWOULDBLOCK), "accept error");
+            int err = errno;
             break;
         }
         else{
@@ -45,11 +51,16 @@ void event_accept(event_t *ev)
         //获取一个空闲连接对象
         //延迟分配connection的内存池
         connection_t* c = getIdleConnection();
-        
+        if(c == NULL){
+            close(conn_fd);
+            return;
+        }
         //给新连接对象赋值
         c->fd = conn_fd;
         c->side = C_DIRECTSTREAM;
         
+        // 获取ip地址,但是需要对ip地址进行hash
+        c->ip = client.sin_addr.s_addr;
         http_init_connection(c);      //ngx_http_init_connection
     }
 }

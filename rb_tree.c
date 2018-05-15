@@ -14,31 +14,30 @@
          .
           y
  */
-void rbtree_left_rotate(rbtree_node_t **root,rbtree_node_t *node,rbtree_node_t * sentinel){
-    rbtree_node_t* y = node->right;
-
-    // 顺序非常重要
-    node->right = y->left;
-    if(y->left != sentinel){
-        // 注意需要判断,y->left是不是空节点
-        y->left->parent = node;
+void rbtree_left_rotate(rbtree_node_t **root,rbtree_node_t * sentinel,rbtree_node_t *node){
+    rbtree_node_t  *temp;
+    
+    temp = node->right;/* temp为node节点的右孩子 */
+    node->right = temp->left;/* 设置node节点的右孩子为temp的左孩子 */
+    
+    if (temp->left != sentinel) {
+        temp->left->parent = node;
     }
     
-    y->parent = node->parent;
-    if(node == *root){
-    //  node是根节点了
-        *root = y;
-    }
-    else if(node->parent->left == node){
-        // node是左子节点
-        node->parent->left = y;
-    }else if(node->parent->right == node){
-        // node是右子节点
-        node->parent->right = y;
+    temp->parent = node->parent;
+    
+    if (node == *root) {
+        *root = temp;
+        
+    } else if (node == node->parent->left) {
+        node->parent->left = temp;
+        
+    } else {
+        node->parent->right = temp;
     }
     
-    y->left = node;
-    node->parent = y;
+    temp->left = node;
+    node->parent = temp;
 }
 
 /*对红黑树进行右旋,以node为支点
@@ -47,29 +46,30 @@ void rbtree_left_rotate(rbtree_node_t **root,rbtree_node_t *node,rbtree_node_t *
    .
  y
  */
-void rbtree_right_rotate(rbtree_node_t **root, rbtree_node_t* node,rbtree_node_t* sentinel){
-    rbtree_node_t  *y;
+void rbtree_right_rotate(rbtree_node_t **root,rbtree_node_t* sentinel, rbtree_node_t* node){
+    rbtree_node_t  *temp;
     
-    y = node->left;
-    node->left = y->right;
+    temp = node->left;
+    node->left = temp->right;
     
-    if (y->right != sentinel) {
-        y->right->parent = node;
+    if (temp->right != sentinel) {
+        temp->right->parent = node;
     }
     
-    y->parent = node->parent;
+    temp->parent = node->parent;
     
     if (node == *root) {
-        *root = y;
+        *root = temp;
         
     } else if (node == node->parent->right) {
-        node->parent->right = y;
+        node->parent->right = temp;
+        
     } else {
-        node->parent->left = y;
+        node->parent->left = temp;
     }
     
-    y->right = node;
-    node->parent = y;
+    temp->right = node;
+    node->parent = temp;
 }
 
 /*
@@ -112,16 +112,8 @@ rbtree_insert_timer_value(rbtree_node_t *temp, rbtree_node_t *node,
     
     for ( ;; ) {
         
-        /*
-         * Timer values
-         * 1) are spread in small range, usually several minutes,
-         * 2) and overflow each 49 days, if milliseconds are stored in 32 bits.
-         * The comparison takes into account that overflow.
-         */
-        
-        /*  node->key < temp->key */
-        
-        p = timer_after(temp->key,node->key) ? &temp->left : &temp->right;
+        /* 判断node节点键值与temp节点键值的大小，以决定node插入到temp节点的左子树还是右子树 */
+        p = (node->key < temp->key) ? &temp->left : &temp->right;
         
         if (*p == sentinel) {
             break;
@@ -130,6 +122,7 @@ rbtree_insert_timer_value(rbtree_node_t *temp, rbtree_node_t *node,
         temp = *p;
     }
     
+    /* 初始化node节点，并着色为红色 */
     *p = node;
     node->parent = temp;
     node->left = sentinel;
@@ -142,87 +135,99 @@ rbtree_insert_timer_value(rbtree_node_t *temp, rbtree_node_t *node,
  */
 void rbtree_insert(rbtree_t* tree,rbtree_node_t * node)
 {
-
     rbtree_node_t  **root, *temp, *sentinel;
+    
     /* a binary tree insert */
+    
     root = (rbtree_node_t **) &tree->root;
     sentinel = tree->sentinel;
     
-    /* 若红黑树为空,把新节点作为根节点，
+    /* 若红黑树为空，则比较简单，把新节点作为根节点，
+     * 并初始化该节点使其满足红黑树性质
      */
     if (*root == sentinel) {
-        node->parent = sentinel;
+        node->parent = NULL;
         node->left = sentinel;
         node->right = sentinel;
         rbt_black(node);
         *root = node;
+        
         return;
     }
     
-    tree->insert(*root,node,sentinel);
-    
-    /* 调整红黑树，使其满足性质,一直循环的条件是node不在根节点,且父节点是红色,否则不需要处理
+    /* 若红黑树不为空，则按照二叉查找树的插入操作进行
+     * 该操作由函数指针提供
      */
-    while(node != *root && rbt_is_red(node->parent)){
-        if(is_left(node->parent)){
-            /*该父节点是祖父的左孩子,叔叔是右孩子*/
-            rbtree_node_t* temp = grand_father(node)->right;//叔叔节点
-            
-            if(rbt_is_red(temp)){
-                /*case 1
-                 *将父节点变黑,祖父节点变红,叔叔节点变黑
-                 *可以证明,所有性质不变
-                 */
-                rbt_black(father(node));
-                rbt_black(temp);
-                rbt_red(grand_father(node));
-                node = grand_father(node);
-            }
+    tree->insert(*root, node, sentinel);
+    
+    /* re-balance tree */
+    
+    /* 调整红黑树，使其满足性质，
+     * 其实这里只是破坏了性质4：若一个节点是红色，则孩子节点都为黑色；
+     * 若破坏了性质4，则新节点 node 及其父亲节点 node->parent 都为红色；
+     */
+    while (node != *root && rbt_is_red(node->parent)) {
         
-            else{
-                if(is_right(node)){
-                    /*
-                     case 2 叔叔是黑色,且node是右节点
-                     以node父亲为中心进行左旋,使得情况变成case3
-                     在case3中,原来的parent现在其实是子节点,要先解决子节点,再解决父节点
-                     */
+        /* 若node的父亲节点是其祖父节点的左孩子 */
+        if (node->parent == node->parent->parent->left) {
+            temp = node->parent->parent->right;/* temp节点为node的叔叔节点 */
+            
+            /* case1：node的叔叔节点是红色 */
+            /* 此时，node的父亲及叔叔节点都为红色；
+             * 解决办法：将node的父亲及叔叔节点着色为黑色，将node祖父节点着色为红色；
+             * 然后沿着祖父节点向上判断是否会破会红黑树的性质；
+             */
+            if (rbt_is_red(temp)) {
+                rbt_black(node->parent);
+                rbt_black(temp);
+                rbt_red(node->parent->parent);
+                node = node->parent->parent;
+                
+            } else {
+                /* case2：node的叔叔节点是黑色且node是父亲节点的右孩子 */
+                /* 则此时，以node父亲节点进行左旋转，使case2转变为case3；
+                 */
+                if (node == node->parent->right) {
                     node = node->parent;
-                    rbtree_left_rotate(root, node, sentinel);
+                    rbtree_left_rotate(root, sentinel, node);
                 }
                 
-                /*case3 叔叔是黑色,且node是左节点
-                  将父节点设置为黑色,祖父节点设置为红色此时只有叔叔节点上的性质5不满足
-                  对祖父节点进行右旋,使得黑色高度增加的父节点变成当前的顶部,容易证明变换后的节点是满足条件的
+                /* case3：node的叔叔节点是黑色且node是父亲节点的左孩子 */
+                /* 首先，将node的父亲节点着色为黑色，祖父节点着色为红色；
+                 * 然后以祖父节点进行一次右旋转；
                  */
-                rbt_black(father(node));
-                rbt_red(grand_father(node));
-                rbtree_right_rotate(root, grand_father(node), sentinel);
-                
+                rbt_black(node->parent);
+                rbt_red(node->parent->parent);
+                rbtree_right_rotate(root, sentinel, node->parent->parent);
             }
-        }
-        else{
-            /*父节点是祖父的右儿子*/
-            temp = grand_father(node)->left;
+            
+        } else {/* 若node的父亲节点是其祖父节点的右孩子 */
+            /* 这里跟上面的情况是对称的，就不再进行讲解了
+             */
+            temp = node->parent->parent->left;
             
             if (rbt_is_red(temp)) {
                 rbt_black(node->parent);
                 rbt_black(temp);
-                rbt_red(grand_father(node));
-                node = grand_father(node);
+                rbt_red(node->parent->parent);
+                node = node->parent->parent;
+                
             } else {
-                if (is_left(node)) {
+                if (node == node->parent->left) {
                     node = node->parent;
-                    rbtree_right_rotate(root, node, sentinel);
+                    rbtree_right_rotate(root, sentinel, node);
                 }
                 
                 rbt_black(node->parent);
                 rbt_red(node->parent->parent);
-                rbtree_left_rotate(root, grand_father(node),sentinel);
+                rbtree_left_rotate(root, sentinel, node->parent->parent);
             }
-       }
+        }
     }
+    
     /* 根节点必须为黑色 */
     rbt_black(*root);
+
 }
 
 /* 获取红黑树键值最小的节点 */
@@ -236,7 +241,7 @@ rbtree_node_t* rbtree_min(rbtree_node_t *node, rbtree_node_t *sentinel)
 
 /*删除一个节点,并且按照红黑树的方式进行调整*/
 void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
-    rbtree_node_t* w,**root,*sentinel;
+    rbtree_node_t *w,**root,*sentinel;
     root = &tree->root;
     sentinel = tree->sentinel;
     
@@ -259,7 +264,7 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
             if (rbt_is_red(w)) {
                 rbt_black(w);
                 rbt_red(temp->parent);
-                rbtree_left_rotate(root, temp->parent,sentinel);
+                rbtree_left_rotate(root,sentinel, temp->parent);
                 w = temp->parent->right;
             }
 
@@ -282,7 +287,7 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
                 if (rbt_is_black(w->right)) {
                     rbt_black(w->left);
                     rbt_red(w);
-                    rbtree_right_rotate(root, w,sentinel);
+                    rbtree_right_rotate(root,sentinel, w);
                     w = temp->parent->right;
                 }
                 
@@ -296,7 +301,7 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
                 rbt_copy_color(w, temp->parent);
                 rbt_black(temp->parent);
                 rbt_black(w->right);
-                rbtree_left_rotate(root, temp->parent, sentinel);
+                rbtree_left_rotate(root,sentinel, temp->parent);
                 temp = *root;
             }
         }else{
@@ -318,14 +323,14 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
                 if (rbt_is_black(w->left)) {
                     rbt_black(w->right);
                     rbt_red(w);
-                    rbtree_left_rotate(root, w,sentinel);
+                    rbtree_left_rotate(root,sentinel, w);
                     w = temp->parent->left;
                 }
                 
                 rbt_copy_color(w, temp->parent);
                 rbt_black(temp->parent);
                 rbt_black(w->left);
-                rbtree_right_rotate(root, temp->parent,sentinel);
+                rbtree_right_rotate(root,sentinel, temp->parent);
                 temp = *root;
             }
         }
@@ -338,8 +343,7 @@ void rbtree_fix_after_delete(rbtree_t* tree,rbtree_node_t* temp){
 
 /* 删除节点 */
 void
-rbtree_delete( rbtree_t *tree,
-                  rbtree_node_t *node)
+rbtree_delete( rbtree_t *tree,rbtree_node_t *node)
 {
     uint           red;
     rbtree_node_t  **root, *sentinel, *subst, *temp, *w;
@@ -372,17 +376,24 @@ rbtree_delete( rbtree_t *tree,
         }
     }
     
-    /* 若被替换的节点subst是根节点，则temp直接替换subst称为根节点,这里只可能是case1/2 */
+    /* 若被替换的节点subst是根节点，则temp直接替换subst称为根节点 */
     if (subst == *root) {
         *root = temp;
         rbt_black(temp);
+        
+        /* DEBUG stuff */
+        node->left = sentinel;
+        node->right = sentinel;
+        node->parent = sentinel;
+        node->key = 0;
+        
         return;
     }
     
     /* red记录subst节点的颜色 */
     red = rbt_is_red(subst);
     
-    /* temp节点替换subst节点,现在开始,subst节点已经不存在了 */
+    /* temp节点替换subst 节点 */
     if (subst == subst->parent->left) {
         subst->parent->left = temp;
         
@@ -395,13 +406,11 @@ rbtree_delete( rbtree_t *tree,
         temp->parent = subst->parent;
         
     } else {
-        // case 3的情况
         
-        // 处理 temp和subst的关系
         if (subst->parent == node) {
-            // now, temp is sentinel
             temp->parent = subst;
-        }else {
+            
+        } else {
             temp->parent = subst->parent;
         }
         
@@ -411,7 +420,6 @@ rbtree_delete( rbtree_t *tree,
         subst->parent = node->parent;
         rbt_copy_color(subst, node);
         
-        // 处理node->parent和subst的关系
         if (node == *root) {
             *root = subst;
             
@@ -423,7 +431,6 @@ rbtree_delete( rbtree_t *tree,
             }
         }
         
-        // 处理subst的child和subst的关系,实际上是node的child和subst的关系
         if (subst->left != sentinel) {
             subst->left->parent = subst;
         }
@@ -433,6 +440,12 @@ rbtree_delete( rbtree_t *tree,
         }
     }
     
+    /* DEBUG stuff */
+    node->left = sentinel;
+    node->right = sentinel;
+    node->parent = sentinel;
+    node->key = 0;
+    
     if (red) {
         return;
     }
@@ -440,8 +453,93 @@ rbtree_delete( rbtree_t *tree,
     /* 下面开始是调整红黑树的性质 */
     /* a delete fixup */
     
-    rbtree_fix_after_delete(tree, temp);
-    return;
+    /* 根据temp节点进行处理 ，若temp不是根节点且为黑色 */
+    while (temp != *root && rbt_is_black(temp)) {
+        
+        /* 若temp是其父亲节点的左孩子 */
+        if (temp == temp->parent->left) {
+            w = temp->parent->right;/* w为temp的兄弟节点 */
+            
+            /* case A：temp兄弟节点为红色 */
+            /* 解决办法：
+             * 1、改变w节点及temp父亲节点的颜色；
+             * 2、对temp父亲节的做一次左旋转，此时，temp的兄弟节点是旋转之前w的某个子节点，该子节点颜色为黑色；
+             * 3、此时，case A已经转换为case B、case C 或 case D；
+             */
+            if (rbt_is_red(w)) {
+                rbt_black(w);
+                rbt_red(temp->parent);
+                rbtree_left_rotate(root, sentinel, temp->parent);
+                w = temp->parent->right;
+            }
+            
+            /* case B：temp的兄弟节点w是黑色，且w的两个子节点都是黑色 */
+            /* 解决办法：
+             * 1、改变w节点的颜色；
+             * 2、把temp的父亲节点作为新的temp节点；
+             */
+            if (rbt_is_black(w->left) && rbt_is_black(w->right)) {
+                rbt_red(w);
+                temp = temp->parent;
+                
+            } else {/* case C：temp的兄弟节点是黑色，且w的左孩子是红色，右孩子是黑色 */
+                /* 解决办法：
+                 * 1、将改变w及其左孩子的颜色；
+                 * 2、对w节点进行一次右旋转；
+                 * 3、此时，temp新的兄弟节点w有着一个红色右孩子的黑色节点，转为case D；
+                 */
+                if (rbt_is_black(w->right)) {
+                    rbt_black(w->left);
+                    rbt_red(w);
+                    rbtree_right_rotate(root, sentinel, w);
+                    w = temp->parent->right;
+                }
+                
+                /* case D：temp的兄弟节点w为黑色，且w的右孩子为红色 */
+                /* 解决办法：
+                 * 1、将w节点设置为temp父亲节点的颜色，temp父亲节点设置为黑色；
+                 * 2、w的右孩子设置为黑色；
+                 * 3、对temp的父亲节点做一次左旋转；
+                 * 4、最后把根节点root设置为temp节点；*/
+                rbt_copy_color(w, temp->parent);
+                rbt_black(temp->parent);
+                rbt_black(w->right);
+                rbtree_left_rotate(root, sentinel, temp->parent);
+                temp = *root;
+            }
+            
+        } else {/* 这里针对的是temp节点为其父亲节点的左孩子的情况 */
+            w = temp->parent->left;
+            
+            if (rbt_is_red(w)) {
+                rbt_black(w);
+                rbt_red(temp->parent);
+                rbtree_right_rotate(root, sentinel, temp->parent);
+                w = temp->parent->left;
+            }
+            
+            if (rbt_is_black(w->left) && rbt_is_black(w->right)) {
+                rbt_red(w);
+                temp = temp->parent;
+                
+            } else {
+                if (rbt_is_black(w->left)) {
+                    rbt_black(w->right);
+                    rbt_red(w);
+                    rbtree_left_rotate(root, sentinel, w);
+                    w = temp->parent->left;
+                }
+                
+                rbt_copy_color(w, temp->parent);
+                rbt_black(temp->parent);
+                rbt_black(w->left);
+                rbtree_right_rotate(root, sentinel, temp->parent);
+                temp = *root;
+            }
+        }
+    }
+    
+    rbt_black(temp);
 }
 
 

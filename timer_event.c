@@ -9,6 +9,7 @@
 #include "commonUtil.h"
 #include "event.h"
 #include "worker.h"
+#include "connection.h"
 
  rbtree_t  event_timer_rbtree;
 /* 红黑树的哨兵节点 */
@@ -36,6 +37,7 @@ void event_del_timer(event_t *ev)
     rbtree_delete(&event_timer_rbtree, &ev->timer);
     /* 设置相应的标志位 */
     ev->timer_set = 0;
+    ev->timedout = false;
 }
 
 
@@ -129,15 +131,14 @@ void event_expire_timers(void)
             ev = (event_t *) ((char *) node - offsetof(event_t, timer));
             rbtree_delete(&event_timer_rbtree, &ev->timer);
             /* 设置事件的在定时器红黑树中的监控标志位 */
-            ev->timer_set = 0;/* 0表示不受监控 */
             /* 设置事件的超时标志位 */
             ev->timedout = 1;/* 1表示已经超时 */
-            
             /* 调用已超时事件的处理函数对该事件进行处理,因为已经超时了,所以必须马上处理 */
+            connection_t *c = ev->data;
             ev->handler(ev);
+            ev->timer_set = 0;/* 0表示不受监控 */
             continue;
         }
-        
         break;
     }
     

@@ -85,7 +85,7 @@ void http_close_request(http_request_t* r)
         http_close_connection(c);
     }
 
-    if(r->upstream != NULL){
+    if(r->upstream){
         http_close_connection(r->upstream);
     }
     if(r->resource_fd > 0){
@@ -97,7 +97,6 @@ void http_close_request(http_request_t* r)
     if(r->cur_upstream){
         free_upstream(r->cur_upstream);
     }
-    
     
     freePool(r->pool);//连request自己都被释放了
 }
@@ -156,7 +155,7 @@ void handle_response(event_t* wev)
     connection_t* c = wev->data;
     http_request_t* r = c->data;
 
-    if(c->fd == -1){
+    if(c->fd < 0){
         return;
     }
 
@@ -217,7 +216,6 @@ void handle_response_file(event_t* wev)
     
     if(wev->timedout){
         plog("server timed out : send response file");
-        r->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(r, r->connection, 404);
         return;
     }
@@ -259,6 +257,9 @@ void http_init_request(event_t* rev)
     http_request_t* r = (http_request_t*)c->data;
     r->connection = c;
     
+    // 需要获取客户的ip
+    
+    
     if(r->recv_buffer == NULL){
         // 这时候可能是复用的tcp链接,所以可能会存在对应的recv_buffer已经分配好了
         r->recv_buffer = createBuffer(r->pool);
@@ -284,10 +285,9 @@ void request_handle_body(event_t * rev)
     }
     
     if(rev->timedout){
-        plog("client timed out : handle body");
+        plog("error:client timed out : handle body");
         req->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(req, req->connection, 404);
-        //http_close_request(req);
         return;
     }
     
@@ -295,7 +295,7 @@ void request_handle_body(event_t * rev)
     n = buffer_recv(req->recv_buffer, c->fd);
     /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
     if (n == ERROR || n == OK) {
-        plog("connection closed by peer when recving the body");
+        plog("error:connection closed by peer when recving the body");
         http_close_request(req);
         return;
     }
@@ -338,8 +338,8 @@ void request_handle_body(event_t * rev)
             return;
         case OK:
             del_event(rev,READ_EVENT,0);
-            if (!req->upstream) {
-                //没有和后台通信的情况
+            if (!req->upstream || req->upstream->fd < 0) {
+                //没有和后台通信的情况(注意fd不一定被成功分配,所以要加以判断)
                 c->wev->handler = handle_response;
                 // 如果已经在解析的时候就出错了,那么response_done会被设置为true
                 if (req->response_done){
@@ -372,10 +372,9 @@ void request_handle_headers(event_t* rev) {
     http_request_t* req = c->data;
     
     if(rev->timedout){
-        plog("client time out: handle header");
+        plog("error:client time out: handle header");
         req->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(req, req->connection, 404);
-        //http_close_request(req);
         return;
     }
     
@@ -387,7 +386,7 @@ void request_handle_headers(event_t* rev) {
     n = buffer_recv(req->recv_buffer, c->fd);
     /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
     if (n == ERROR || n == OK) {
-        plog("connection closed by peer when parsing the header");
+        plog("error:connection closed by peer when parsing the header");
         http_close_request(req);
         return;
     }
@@ -453,7 +452,7 @@ void ngx_http_process_request_line(event_t* rev){
     req = c->data;
     
     if (rev->timedout) {
-        plog("client timed out");
+        plog("error: client timed out");
         req->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(req, req->connection, 404);
         return;
@@ -954,7 +953,7 @@ void http_proxy_pass(event_t* wev){
         del_event(upstream->wev,WRITE_EVENT,0);
     } else if (err == ERROR) {
         // 对方已经关闭了链接,所以我们设置对客户端的回应信息
-        // 上游的链接现在已经关闭,所以我们应该进行处理
+        plog("err on upstream %d",errno);
         construct_err(r, r->connection, 503);
     }
     
@@ -1001,6 +1000,7 @@ void http_recv_upstream(event_t* rev){
         // 上游出现了错误,那么我们需要直接构造返回的数据即可。
         // 注意这个时候connection可能处于两个状态 1 还在接受客户的数据(上游出错) 2 已经接受完了客户的数据,只等着转发回复到客户端
         // 无论哪个状态,都会直接关闭链接,返回错误信息
+        plog("err on recv from upstream err:%d",errno);
         construct_err(r, r->connection, 503);
         return;
     }
@@ -1008,6 +1008,76 @@ void http_recv_upstream(event_t* rev){
     // 防止bakcend服务器超时
     if(!rev->timer_set){
         event_add_timer(rev, server_cfg.upstream_timeout);
+    }
+}
+
+/*upstream的第一个回调函数
+ 在这个函数里面需要处理
+ 0  该链接已经被释放的情况,比如客户端已经关闭,那么这里就会被提前释放
+ 
+ 1 connect 失败/超时
+ 1.1 如果失败,需要设置对应的server的失败次数
+ 1.2 需要调用free函数进行释放
+ 2 connect 成功
+ 2.1 如果成功,需要设置request对应的current_upstream
+ 2.2 需要设置接下来对应的回调函数
+ */
+void process_connection_result_of_upstream(event_t* wev){
+    connection_t* upstream = wev->data;
+    http_request_t* r = upstream->data;
+    upsream_server_t* us = r->cur_upstream;
+    int fd = upstream->fd;
+    
+    /* 处理该链接已经被释放的情况*/
+    if(fd == -1){
+        return;
+    }
+    
+    /* 处理connect超时情况 */
+    if(wev->timedout){
+        plog("connect to upstream server(%s) timedout,fd:%d",us->location->host.c,fd);
+        construct_err(r, r->connection, 504);
+        return;
+    }
+        
+    /* 调用getsockopt来判断该socket的出错情况*/
+    int err;
+    socklen_t len = sizeof(err);
+    if(getsockopt(fd,SOL_SOCKET,SO_ERROR,&err,&len) < 0)
+    {
+        plog("getsockopt failed, errno:%d",err);
+        construct_err(r, r->connection, 502);
+        return;
+    }
+    
+    if(err == 0){
+        // 已经链接成功了,那么继续
+        r->cur_upstream = us;
+        init_upstream_connection(r, upstream, fd);
+    }else{
+        //其他类型的错误,不能忽略
+        
+        /* connect失败,释放对应的upstream_server对应的数据 */
+        r->cur_upstream = NULL;
+        r->upstream_tries++;
+        upsream_server_arr_t* server_domain = r->cur_server_domain;
+        us->state = UPSTREAM_CONN_FAIL;
+        free_upstream(us);
+        
+        /*  case1: 如果尝试次数小于服务器总次数,
+                   接下来需要重新选择后端服务器(第二个参数为NULL是因为r的cur_server_domain一定不为空)
+            case2: 如果已经到达最大尝试次数,那么需要直接返回错误页面
+         */
+        
+        // case1
+        if(r->upstream_tries < server_domain->nelts){
+            try_connect_upstream(r,NULL);
+            plog("connect to upstream(%s) failed,errno:%d",us->location->host.c,err);
+        }else{
+            // case2
+            construct_err(r, r->connection, 502);
+            return;
+        }
     }
 }
 
