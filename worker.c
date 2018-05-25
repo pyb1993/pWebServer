@@ -11,6 +11,7 @@
 #include "commonUtil.h"
 #include "unistd.h"
 #include "event.h"
+#include "server.h"
 #include <sys/time.h>
 int p_reap = 0;
 int p_exit = 0;
@@ -39,7 +40,7 @@ void signal_worker_processes(vector* workers,int signo){
             
             plog("kill(%d, %d) failed", worker->pid, signo);
             
-            //没有找到这样的process group或者process,那么需要
+            //没有找到这样的process group或者process
             if (errno == ESRCH) {
                 worker->exited = 1;
                 worker->exiting = 0;
@@ -65,7 +66,9 @@ void worker_process_exit(vector* workers)
 void worker_cycle_process()
 {
     //ABORT_ON(process_status != WORKER, "this function can only run in worker!!!");
+    static int times = 0;
     worker_process_init();
+    
     while(1)
     {
         if(p_exiting)
@@ -78,7 +81,12 @@ void worker_cycle_process()
         }
         
         process_events_and_timer();//处理各种链接的处理
-        
+        times++;
+        if(times % 1000 == 0){
+            plog_debug("%d : connection number : %d",times,connection_pool.cpool.used);
+        }
+        //test_connection();
+
         if(p_terminate)
         {
             worker_process_exit(&server_cfg.workers);//直接退出
@@ -104,6 +112,10 @@ void worker_cycle_process()
 
 // 在worker启动的时候进行初始化
 void worker_process_init(){
+    
+    struct rlimit nofile_limit = {65535, 65535};
+    setrlimit(RLIMIT_NOFILE, &nofile_limit);//控制一个进程里面能够获得的最大打开文件描述符号
+
     event_module.process_init();
     upstream_module.process_init();
     // todo upstream_module.process_init();
@@ -126,7 +138,6 @@ void process_events_and_timer()
         flags = UPDATE_TIME;
     }
 
-    
     delta = current_msec;
     event_process(timer,flags);//传0代表设置了时间精度,依靠定时信号来设置
     delta = current_msec - delta;
@@ -153,7 +164,6 @@ void time_update()
     msec = tv.tv_usec / 1000;   //从微秒usec中计算毫秒msec
     
     current_msec = (msec_t) sec * 1000 + msec;
-    //plog("update timer");
 }
 
 /*
@@ -162,14 +172,15 @@ void time_update()
 void accept_connection(int socket){
     while (1) {
         int conn_fd = accept(socket,NULL,NULL);
+        
         connection_t* c = getIdleConnection();
         c->fd = conn_fd;
-        c->side = C_DIRECTSTREAM;
         if(conn_fd == ERROR){
             ERR_ON((errno != EWOULDBLOCK), "accept");
             break;
         }
         else{
+            c->is_connected = true;
             plog("new connection conn_fd %d\n", conn_fd);
         }
     }

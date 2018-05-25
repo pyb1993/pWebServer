@@ -14,41 +14,18 @@
 #include "commonUtil.h"
 #include "header.h"
 #include "upstream_server_module.h"
-
 /* 用来初始化一个http链接(connection) *
  设置对应的事件回调函数
  */
-#define RETURN_ERR_ON(cond, err) {   \
-if (cond) {                     \
-return (err);               \
-}                               \
-};
-void http_init_connection(connection_t* c)
-{
-    event_t* rev = c->rev;
-    rev->timedout = 0;//设置超时状态
-    //读事件回调
-    rev->handler = http_init_request;//应该是init_request函数
-    
-    //该写回调没有做任何事件，因为这个阶段还不需要向客户端写入任何数据
-    c->wev->handler = NULL;
-    
-    //将读事件插入到红黑树中，用于管理超时事件，post_accept_timeout超时事件,这是第一个超时事件,实际上后面的函数都可以检验这个超时事件
-    event_add_timer(rev, server_cfg.post_accept_timeout);
-    
-    //将读事件注册到epoll中，此时并没有把写事件注册到epoll中，因为现在还不需要向客户端发送任何数据，所以写事件并不需要注册
-    if (add_event(rev, READ_EVENT, 0) == ERROR)
-    {
-        plog("add event error");
-        return;
-    }
-    
-    plog("init the conncection for %d", c->fd);
-}
 
-/*分配一个request和它的内存池
-  request的所有内存都是由内存池分配的,
-  包括它自己,所以释放的时候,应该最后释放pool
+
+
+/* 创建一个request结构体,有以下几件事情要做
+   1 分配内存池,用来在后面分配对应的buffer
+   2 清空这个request结构体里面的所有数据
+   3 设置初始化的状态
+ 
+  request的所有内存都是由内存池分配的,包括它自己,所以释放的时候,应该逆序释放
  */
 
 http_request_t* create_http_request(){
@@ -81,7 +58,7 @@ void http_close_request(http_request_t* r)
     
     plog("close the request %d -> %d",r->connection->fd,r->upstream == NULL ? 0 : r->upstream->fd);
     connection_t* c = r->connection;
-    if(c != NULL){
+    if(c){
         http_close_connection(c);
     }
 
@@ -103,7 +80,8 @@ void http_close_request(http_request_t* r)
 
 
 /*clear request,但是不释放链接,也不释放request的内存池,等待下一次的链接重用
-  注意这里需要释放upstream链接,因为下一个请求不一定还是需要转发的了.
+  注意这里需要释放upstream链接,因为下一个请求的未必需要同一个后端服务器
+  注意到这里需要做的一件
  */
 void http_clear_request(http_request_t* r)
 {
@@ -116,16 +94,25 @@ void http_clear_request(http_request_t* r)
     if(r->upstream){
         http_close_connection(r->upstream);//释放长链接
     }
+    
     if(r->resource_fd > 0){
         close(r->resource_fd);
         r->resource_fd = -1;
     }
+    
     memzero(r, sizeof(http_request_t));
-
     r->connection = c;
     r->pool = pool;
     r->recv_buffer = rb;
     r->send_buffer = sb;
+ 
+    // 如果是upstream 链接,且链接成功,那么要调用这个函数
+    if(r->cur_upstream){
+        free_upstream(r->cur_upstream);
+    }
+    
+    // todo debug
+    r->header_name = STRING("fuck you");
 }
 
 // 处理response发完以后的请求
@@ -133,15 +120,11 @@ void http_response_done(http_request_t* r){
     ABORT_ON(r->response_done != true, "error on response done");
     if(r->keep_alive){
         connection_t* c = r->connection;
-        plog("reuse the connection  fd(%d)",c->fd);
-        del_event(c->wev,WRITE_EVENT,0);//已经写完了
-        add_event(c->rev,READ_EVENT,0);//已经写完了,回复到读取的状态
+        plog("reuse the connection:(%d)",c->fd);
         http_clear_request(r);// 清理请求的状态,等待复用
+        del_event(c->wev,WRITE_EVENT,0);//已经写完了(自动清理定时器)
+        add_event(c->rev,READ_EVENT,0);//已经写完了,回复到读取的状态
         c->rev->handler = ngx_http_process_request_line;//重新恢复到处理请求行的状态
-        // 这里需要添加一个定时器,避免大量的空闲链接,同时删除写事件的定时器(因为写事件不一定被加入了定时器)
-        if(c->wev->timer_set){
-            event_del_timer(c->wev);
-        }
         event_add_timer(c->rev, server_cfg.keep_alive_timeout);
     }
     else{
@@ -155,7 +138,7 @@ void handle_response(event_t* wev)
     connection_t* c = wev->data;
     http_request_t* r = c->data;
 
-    if(c->fd < 0){
+    if(c->fd <= 0){
         return;
     }
 
@@ -179,7 +162,7 @@ void handle_response(event_t* wev)
             return;
         }
         
-        // case: porxy模式
+        // case: 普通请求
         if(r->resource_fd > 0 && !r->response_done)
         {
             //注意response_done的用途,如果已经出错,那么就不执行发送file的操作
@@ -198,16 +181,12 @@ void handle_response(event_t* wev)
         del_event(wev,WRITE_EVENT,0);
     }
     else if(err == AGAIN){
-        if(wev->timer_set){
-            event_add_timer(wev,server_cfg.post_accept_timeout);
-        }
+        event_add_timer(wev,server_cfg.post_accept_timeout);
     }
     else if(err == ERROR){
         http_close_request(r);
     }
 }
-
-
 
 void handle_response_file(event_t* wev)
 {
@@ -215,7 +194,7 @@ void handle_response_file(event_t* wev)
     http_request_t* r = c->data;
     
     if(wev->timedout){
-        plog("server timed out : send response file");
+        plog("connection: %dserver timed out : send response file",c->fd);
         construct_err(r, r->connection, 404);
         return;
     }
@@ -234,10 +213,16 @@ void handle_response_file(event_t* wev)
     }
 }
 
-
-
 /*
+ 注意,走到当前这个函数的,都不可能是keep-alive的链接(设置的回调函数是process_request_line)
  接收到真正的数据时,才开始初始化http_request
+ 
+ todo: 采取缓冲池的办法来优化对request内存的分配
+        思路如下,我们构建一个大的内存池,叫做request_pool 4096 * 3000,
+        然后每次需要申请请求的时候,就从这个request_pool里面申请内存来createRequest
+        request自己也需要一个内存池,这个内存池就从里request_pool里面获得
+        当request需要被释放的时候,需要将时间
+ 
 */
 void http_init_request(event_t* rev)
 {
@@ -252,20 +237,20 @@ void http_init_request(event_t* rev)
         return;
     }
 
-    plog("begin init request!!!");
-    c->data = create_http_request();
-    http_request_t* r = (http_request_t*)c->data;
+    plog("begin init request!!! for connection:%d",c->fd);
+    
+    http_request_t* r = c->data = create_http_request();
+
     r->connection = c;
-    
-    // 需要获取客户的ip
-    
-    
-    if(r->recv_buffer == NULL){
-        // 这时候可能是复用的tcp链接,所以可能会存在对应的recv_buffer已经分配好了
-        r->recv_buffer = createBuffer(r->pool);
-    }
-    r->send_buffer = createBuffer(r->pool);// 因为upstream是一个短链接,所以每一次请求都会导致send_buffer被释放
-    
+    plog("try to init buffer for connection:%d",c->fd);
+
+    // todo 这里可能可以优化,因为可以延迟到需要接受数据或者写数据的时候再分配
+    r->recv_buffer = createBuffer(r->pool);
+    plog("init buffer1 for connection:%d",c->fd);
+
+    r->send_buffer = createBuffer(r->pool);
+    plog("init buffer1 for connection:%d",c->fd);
+
     /* 设置当前读事件的处理方法为ngx_http_process_request_line */
     rev->handler = ngx_http_process_request_line;
     
@@ -274,28 +259,34 @@ void http_init_request(event_t* rev)
 }
 
 
-
+/* 接受从客户端传过来的body数据
+   无论本次是否将body接受完成,都分为3种情况
+   case1: 不需要链接后端服务器,直接进入下一个handle_response的阶段
+   case2: 需要和后端服务器通信,并且已经链接上了
+   case3: 需要和后端服务器进行通信,但是目前还没有链接上
+          如果接受没有完成,那么应该继续等待
+          如果接受完成,如果不做特殊处理,就会导致事件丢失。所以在这个地方,必须设置一个状态,方便链接成功的时候的回调添加写事件
+ */
 void request_handle_body(event_t * rev)
 {
     connection_t* c = rev->data;
     http_request_t* req = c->data;
-    int n;
-    if(c->fd == -1){
+    if(c->fd <= 0){
         return;
     }
     
     if(rev->timedout){
         plog("error:client timed out : handle body");
-        req->keep_alive = false;//超时,关闭链接,不再复用
         construct_err(req, req->connection, 404);
         return;
     }
     
+    plog("connection:(%d) handle body",c->fd);
     /* 读取当前请求未解析的数据 */
-    n = buffer_recv(req->recv_buffer, c->fd);
+    int n = buffer_recv(req->recv_buffer, c->fd);
     /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
     if (n == ERROR || n == OK) {
-        plog("error:connection closed by peer when recving the body");
+        plog("error:connection:%d closed by peer when recving the body",c->fd);
         http_close_request(req);
         return;
     }
@@ -309,52 +300,59 @@ void request_handle_body(event_t * rev)
             err = parse_request_body_identity(req);//r->rb->begin指向了消费过body之后的位置(不一定读完了body)
             break;
         default:
-            // TODO(wgtdkp): cannot understanding
-            // May discard the body
             assert(false);
     }
-    
-    /*
-     AGINA意味着: body是存在的,那么就应该存在对应的uc
-     OK意味这body部分已经结束:(无论不存在还是已经读完了)
-     在这里发生的EVENTS的状态改变
-     connection_disable_in: 清除EVENTS_IN的状态
-     connection_enable_in: 设置EVENT_IN的状态
-     */
     
     buffer_t* b = req->recv_buffer;
     switch (err)
     {
         case AGAIN:
-            // todo: 现在的做法是: 关闭client->server的读事件,等到本次读取到的数据在handle_pass中转发完了之后再继续
-            // 可以提高吞吐量的一种做法是: 同时维护client->server的读取状态,和维护handle_pass中server->banckend的发送状态,这样同时进行
-            // 需要验证的是: 进行压力测试,观察这个部分是否会成为某个小瓶劲(直觉上不会是优先的瓶劲)。思考在什么样的业务模式下会成为瓶劲。
-            b->end = b->begin;//将本次buffer所有数据都转发给backend
+            /*  todo: 现在的做法是: 关闭client->server的读事件,等到本次读取到的数据在handle_pass中转发完了之后再继续
+                可以提高吞吐量的一种做法是: 同时维护client->server的读取状态,和维护handle_pass中server->banckend的发送状态,这样同时进行
+                需要验证的是: 进行压力测试,观察这个部分是否会成为某个小瓶劲(直觉上不会是优先的瓶劲)。思考在什么样的业务模式下会成为瓶劲。
+                b->end = b->begin;
+                将本次buffer所有数据都转发给backend
+             */
             b->begin = b->data;
-            if(req->upstream){
+            if(req->upstream == NULL){
+                return;
+            }
+            if(req->upstream->is_connected){
+                // case2
                 del_event(rev,READ_EVENT,0);
                 add_event(req->upstream->wev,WRITE_EVENT,0);//因为存在body,所以默认是需要后台转发。所以从第一次接受到数据开始,就需要监听front->backend
+            }else{
+                // case3 接受完成,但是还没有链接好后端服务器
+                req->state = BODY_RECV_BEGIN;
             }
             return;
         case OK:
             del_event(rev,READ_EVENT,0);
-            if (!req->upstream || req->upstream->fd < 0) {
-                //没有和后台通信的情况(注意fd不一定被成功分配,所以要加以判断)
+            if(req->upstream == NULL){
+                //case1
                 c->wev->handler = handle_response;
+                
                 // 如果已经在解析的时候就出错了,那么response_done会被设置为true
                 if (req->response_done){
                     return;
                 }
+                
                 add_event(c->wev,WRITE_EVENT,0);
                 req->status = 200;
                 construct_response(c->data);
                 event_add_timer(c->wev, server_cfg.post_accept_timeout);// todo: fix me : time out
-            }else {
-                // todo add timer
+                return;
+            }else if(req->upstream->is_connected){
+                // case2
                 b->end = b->begin;
                 b->begin = b->data;
                 add_event(req->upstream->wev,WRITE_EVENT,0);//当request处理完成了以后,接下来需要监听front->backend(需要转发最后一次的内容)
                 event_add_timer(req->upstream->wev, server_cfg.post_accept_timeout);// todo fix me, time out
+            }else{
+                // case3 等待后台通信成功/超时/失败
+                b->end = b->begin;
+                b->begin = b->data;
+                req->state = BODY_RECV_DONE;
             }
             break;
         default:
@@ -366,7 +364,7 @@ void request_handle_body(event_t * rev)
 
 
 /*解析buffer里面的header部分,如果阻塞,就加入timer*/
-void request_handle_headers(event_t* rev) {
+void http_parse_headers(event_t* rev) {
     int n;
     connection_t* c = rev->data;
     http_request_t* req = c->data;
@@ -378,15 +376,17 @@ void request_handle_headers(event_t* rev) {
         return;
     }
     
-    if(c->fd == -1){
+    if(c->fd <= 0){
         return;
     }
+    
+    plog("handle headers for connection:%d",c->fd);
     
     /* 读取当前请求未解析的数据 */
     n = buffer_recv(req->recv_buffer, c->fd);
     /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
     if (n == ERROR || n == OK) {
-        plog("error:connection closed by peer when parsing the header");
+        plog("error:connection(%d) closed by peer when parsing the header",c->fd);
         http_close_request(req);
         return;
     }
@@ -440,6 +440,13 @@ done:
     request_handle_body(rev);
 }
 
+/*
+ 由于接受到数据而被唤醒,开始解析
+ 这里有两个可能的到达路径,目前来看没有什么区别:
+    1 keep-alive的链接直接被唤起
+    2 刚链接上的新链接
+ 在这里需要处理超时和链接被释放的情况(其他handler函数类似)
+ */
 void ngx_http_process_request_line(event_t* rev){
     //需要处理读取到的数据,直到把请求行读完
     int                n;
@@ -452,50 +459,49 @@ void ngx_http_process_request_line(event_t* rev){
     req = c->data;
     
     if (rev->timedout) {
-        plog("error: client timed out");
-        req->keep_alive = false;//超时,关闭链接,不再复用
+        plog("error: connection(%d)client timed out in procees_request_line",c->fd);
         construct_err(req, req->connection, 404);
         return;
     }
     
-    if(c->fd == -1){
+    if(c->fd <= 0){
         return;
     }
     
-    /* 读取当前请求未解析的数据 */
+    plog("process request line for connection:%d",c->fd);
+    
     n = buffer_recv(req->recv_buffer, c->fd);
+    
     /* 若链接关闭(OK)，或读取失败(ERROR)，则直接退出 */
     if (n == ERROR || n == OK) {
-        plog("the request done");
+        plog("the connection(%d) failed in process_request_line(connection reset by peer or other unknown reason)",c->fd);
         http_close_request(req);
         return;
     }
 
     /* 解析接收缓冲区c->buffer中的请求行 */
-    rc = http_parse_request_line(req, req->recv_buffer);
+    rc = parse_request_line(req, req->recv_buffer);
     
     /* 若请求行解析完毕 */
     if (rc == OK) {
         /* 开始解析header的部分,注意设置状态的转换 */
-        rev->handler = request_handle_headers;
+        plog("connection %d: process uri success",c->fd);
+        rev->handler = http_parse_headers;
         req->state = HD_BEGIN;
-        request_process_uri(req);
-        plog("process uri succ");
-        request_handle_headers(rev);//交给解析头部的函数了
+        ERR_ON(request_process_uri(req) != OK,"err on process uri");
+        http_parse_headers(rev);//交给解析头部的函数了
         return;
     }
     
     /* 解析请求行出错 */
     if (rc != AGAIN) {
-        /* there was error while a request line parsing */
+        plog("err :connection %d: process uri failed",c->fd);
         construct_err(req, req->connection, 400);
         return;
     }
     
     // 阻塞了,需要设置超时事件
-    if (!rev->timer_set) {
-        event_add_timer(rev, server_cfg.post_accept_timeout);
-    }
+    event_add_timer(rev, server_cfg.post_accept_timeout);
     
     /* NGX_AGAIN: a request line parsing is still incomplete */
     /* 请求行仍然未解析完毕，则继续读取请求数据 */
@@ -507,192 +513,7 @@ void ngx_http_process_request_line(event_t* rev){
     return;
 }
 
-/*解析请求行 method uri http/version*/
-int http_parse_request_line(http_request_t* r,buffer_t *b){
-        char *p;
-        int uri_err;
-        for(p = b->begin; p < b->end;++p)
-        {
-            char ch = *p;
-            switch (r->state) {
-                case RQ_BEGIN:
-                    switch (ch)
-                {
-                    case 'A' ... 'Z':
-                        r->request_line.c = p;
-                        r->state = RQ_METHOD;
-                        break;
-                    default:
-                        return INVALID_REQUEST;
-                }
-                    break;
-                    
-                case RQ_METHOD:
-                    switch (ch) {
-                        case 'A'...'Z':
-                            break;
-                            
-                        case ' ':
-                            r->method = parse_request_method(r->request_line.c,p);
-                            if(r->method == M_INVALID_METHOD){
-                                return INVALID_REQUEST;
-                            }
-                            r->state = RQ_BEFORE_URI;
-                            break;
-                    }
-                    break;
-                case RQ_BEFORE_URI:
-                    switch (ch) {
-                        case '\t':
-                        case '\r':
-                        case '\n':
-                            return INVALID_REQUEST;
-                        case ' ':
-                            // 忽略所有的连续' '
-                            break;
-                        default:
-                            if ((uri_err = parse_uri(&r->uri, p)) != OK) {
-                                return uri_err;
-                            }
-                            r->state = RQ_URI;
-                            break;
-                    }
-                    break;
-                case RQ_URI:
-                    switch (ch) {
-                        case '\t':
-                        case '\r':
-                        case '\n':
-                            return INVALID_REQUEST;
-                        case ' ':
-                            if(r->uri.state == URI_ABS_PATH){
-                                r->uri.abs_path.len = p - r->uri.abs_path.c;
-                            }
-                            else if (r->uri.state == URI_HOST){
-                                r->uri.host.len = p - r->uri.host.c;
-                            }
-                            else if (r->uri.state == URI_PORT){
-                                ++(r->uri.port.c);
-                                r->uri.port.len = p - r->uri.port.c;
-                            }
-                            else if (r->uri.state == URI_EXTENSION){
-                                r->uri.extension.extension_str.len = p - r->uri.extension.extension_str.c;
 
-                            }
-                            else if (r->uri.state == URI_QUERY){
-                                r->uri.query.len = p - r->uri.query.c;
-                            }
-                            else{
-                                ABORT_ON(0, "unexpected state");
-                            }
-                            r->state = RQ_BEFORE_VERSION;
-                            break;
-                        default:
-                            if ((uri_err = parse_uri(&r->uri, p)) != OK) {
-                                return uri_err;
-                            }
-                            break;
-                    }
-                    break;
-                case RQ_BEFORE_VERSION:
-                    switch (ch) {
-                        case ' ':
-                            break;
-                        case 'H':
-                            r->state = RQ_VERSION_H;
-                            break;
-                        default:
-                            return INVALID_REQUEST;
-                    }
-                    break;
-                case RQ_VERSION_H:
-                    RETURN_ERR_ON(ch != 'T', INVALID_REQUEST);
-                    r->state = RQ_VERSION_HT;
-                    break;
-                case RQ_VERSION_HT:
-                    RETURN_ERR_ON(ch != 'T', INVALID_REQUEST);
-                    r->state = RQ_VERSION_HTT;
-                    break;
-                case RQ_VERSION_HTT:
-                    RETURN_ERR_ON(ch != 'P', INVALID_REQUEST);
-                    r->state = RQ_VERSION_HTTP;
-                    break;
-                case RQ_VERSION_HTTP:
-                    RETURN_ERR_ON(ch != '/', INVALID_REQUEST);
-                    r->state = RQ_VERSION_SLASH;
-                    break;
-                case RQ_VERSION_SLASH:
-                    switch (ch) {
-                        case '0' ... '9':
-                            r->version.major = r->version.major * 10 + ch - '0';
-                            RETURN_ERR_ON(r->version.major > 100, INVALID_REQUEST);
-                            r->state = RQ_VERSION_DOT;
-                            break;
-                        default:
-                            return INVALID_REQUEST;
-                    }
-                    break;
-                case RQ_VERSION_MAJOR:
-                    switch (ch) {
-                        case '0' ... '9':
-                            r->version.major = r->version.major * 10 + ch - '0';
-                            RETURN_ERR_ON(r->version.major > 100, INVALID_REQUEST);
-                            break;
-                        case '.':
-                            r->state = RQ_VERSION_DOT;
-                            break;
-                        default:
-                            return INVALID_REQUEST;
-                    }
-                    break;
-                case RQ_VERSION_DOT:
-                    RETURN_ERR_ON('0' <= ch && ch <= '9', INVALID_REQUEST);
-                    r->state = RQ_VERSION_MINOR;
-                    break;
-                case RQ_VERSION_MINOR:
-                    switch (ch) {
-                        case '0' ... '9':
-                            r->version.minor = r->version.minor * 10 + ch - '0';
-                            RETURN_ERR_ON(r->version.minor > 100, INVALID_REQUEST);
-                            break;
-                        case ' ':
-                            r->state = RQ_AFTER_VERSION;
-                            break;
-                        case '\r':
-                            r->state = RQ_ALMOST_DONE;
-                            break;
-                        default:
-                            return INVALID_REQUEST;
-                    }
-                    break;
-                case RQ_AFTER_VERSION:
-                    switch (ch) {
-                        case ' ':
-                            break;
-                        case '\r':
-                            r->state = RQ_ALMOST_DONE;
-                            break;
-                        default:
-                            return INVALID_REQUEST;
-                    }
-                    break;
-                case RQ_ALMOST_DONE:
-                    RETURN_ERR_ON(ch != '\n', INVALID_REQUEST);
-                    goto done;
-                    break;
-                default:
-                    return INVALID_REQUEST;
-            }
-        }
-        b->begin = b->end;
-        return AGAIN;
-    
-done:
-    b->begin = p + 1;
-    r->request_line.len = (int)(p - r->request_line.c);
-    r->state = RQ_DONE;
-    return OK;
-}
 
 /*
   Request-URI = [scheme ":" "//" host[":" port]][abs_path["?" query]]
@@ -930,7 +751,7 @@ int parse_request_method(char * begin,char * end){
  */
 void http_proxy_pass(event_t* wev){
     connection_t* upstream = wev->data;
-    if(upstream->fd == -1){
+    if(upstream->fd <= 0){
         return;
     }
     
@@ -970,72 +791,78 @@ void http_proxy_pass(event_t* wev){
 void http_recv_upstream(event_t* rev){
     connection_t* upstream = rev->data;
     http_request_t* r = upstream->data;
-    if(upstream->fd == -1){
+    if(upstream->fd <= 0){
         return;
     }
     
     if(rev->timedout){
-    // upstream超时,关闭链接,并且
+    // upstream超时,关闭链接
         plog("timed out when recv upstream %d",upstream->fd);
         http_close_connection(upstream);
-        r->upstream = NULL;
         construct_err(r, r->connection, 504);
         return;
     }
+    
+    plog("connection: %d: recv from upstream(%d)",r->connection->fd,r->upstream->fd);
     
     int err = buffer_recv(r->send_buffer, upstream->fd);
     if(!r->connection->wev->handler){
         r->connection->wev->handler = handle_response;
     }
+    
     // 获取了数据,所以需要转发
     add_event(r->connection->wev,WRITE_EVENT,0);
     if(err == OK){
-        // 上游关闭了本链接,发送了一个FIN过来
-        // 正确的姿势是:关闭upstream的链接,但是不关闭请求。因为connection可能还有没有处理完的数据
+        // 上游关闭了链接
+        // 关闭upstream的链接,但是不关闭请求。因为connection还需要回复client
+        
         http_close_connection(upstream);
         r->response_done = true;// 告知 handle_response 可以结束了
-        r->upstream = NULL;
         return;
     }else if(err == ERROR){
-        // 上游出现了错误,那么我们需要直接构造返回的数据即可。
+        // 上游出现了错误,那么我们直接构造返回的数据即可。
         // 注意这个时候connection可能处于两个状态 1 还在接受客户的数据(上游出错) 2 已经接受完了客户的数据,只等着转发回复到客户端
         // 无论哪个状态,都会直接关闭链接,返回错误信息
+        
         plog("err on recv from upstream err:%d",errno);
         construct_err(r, r->connection, 503);
         return;
     }
     
-    // 防止bakcend服务器超时
-    if(!rev->timer_set){
-        event_add_timer(rev, server_cfg.upstream_timeout);
-    }
+    event_add_timer(rev, server_cfg.upstream_timeout);// 防止bakcend服务器超时
 }
 
 /*upstream的第一个回调函数
  在这个函数里面需要处理
  0  该链接已经被释放的情况,比如客户端已经关闭,那么这里就会被提前释放
+    该链接对应的request居然已经被clear过了,这是非常严重的bug
+    正常逻辑,clear_request之后,upstream链接一定被直接close的
+    upstream被清空,那么对应的wev和rev也都不会有任何handler
+ 
  
  1 connect 失败/超时
  1.1 如果失败,需要设置对应的server的失败次数
  1.2 需要调用free函数进行释放
+ 
  2 connect 成功
  2.1 如果成功,需要设置request对应的current_upstream
  2.2 需要设置接下来对应的回调函数
  */
 void process_connection_result_of_upstream(event_t* wev){
     connection_t* upstream = wev->data;
+    
+    /* 处理可能的corner case */
+    if(upstream == NULL || upstream->fd <= 0){
+        return;
+    }
+    
     http_request_t* r = upstream->data;
     upsream_server_t* us = r->cur_upstream;
     int fd = upstream->fd;
     
-    /* 处理该链接已经被释放的情况*/
-    if(fd == -1){
-        return;
-    }
-    
     /* 处理connect超时情况 */
     if(wev->timedout){
-        plog("connect to upstream server(%s) timedout,fd:%d",us->location->host.c,fd);
+        plog("connect to upstream server(%s:%d) timedout,fd:%d",us->location->host.c,us->location->port,fd);
         construct_err(r, r->connection, 504);
         return;
     }
@@ -1052,6 +879,7 @@ void process_connection_result_of_upstream(event_t* wev){
     
     if(err == 0){
         // 已经链接成功了,那么继续
+        plog("connect to upstream succ:info: server => backend  => port : %d => %d => %d",r->connection->fd,fd,us->location->port);
         r->cur_upstream = us;
         init_upstream_connection(r, upstream, fd);
     }else{
@@ -1059,25 +887,22 @@ void process_connection_result_of_upstream(event_t* wev){
         
         /* connect失败,释放对应的upstream_server对应的数据 */
         r->cur_upstream = NULL;
-        r->upstream_tries++;
         upsream_server_arr_t* server_domain = r->cur_server_domain;
         us->state = UPSTREAM_CONN_FAIL;
         free_upstream(us);
         
         /*  case1: 如果尝试次数小于服务器总次数,
                    接下来需要重新选择后端服务器(第二个参数为NULL是因为r的cur_server_domain一定不为空)
-            case2: 如果已经到达最大尝试次数,那么需要直接返回错误页面
+            case2: 如果已经到达最大尝试次数,那么继续调用try_connect_upstream,会进入错误页面的流程
+            以上两种情况目前统一处理
          */
         
-        // case1
-        if(r->upstream_tries < server_domain->nelts){
-            try_connect_upstream(r,NULL);
-            plog("connect to upstream(%s) failed,errno:%d",us->location->host.c,err);
-        }else{
-            // case2
-            construct_err(r, r->connection, 502);
-            return;
-        }
+        // case1 || case2
+        // 这里对fd/事件/timer的处理思路和try_connect中一致
+        del_event(r->upstream->wev,WRITE_EVENT,0);
+        //close(fd);
+        plog("connect to upstream(%s:%d) failed,errno:%d",us->location->host.c,us->location->port,err);
+        try_connect_upstream(r,NULL);
     }
 }
 

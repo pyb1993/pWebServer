@@ -44,6 +44,11 @@ int set_nonblocking(int sockfd){
 // 获取一个listen socekt
 int startUp(int port)
 {
+    
+    if(getpid() % 2 == 0){
+        int f =  socket(PF_INET, SOCK_STREAM, 0);
+    }
+    
     listen_fd = 0;
     struct sockaddr_in server_addr = {0};
     int addr_len = sizeof(server_addr);
@@ -52,7 +57,7 @@ int startUp(int port)
         return ERROR;
     }
     
-    //
+    // 
     int on = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));// if not, restart the server may cause error
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on));
@@ -64,7 +69,9 @@ int startUp(int port)
     if (bind(listen_fd, (struct sockaddr*)&server_addr, addr_len) < 0) {
         return ERROR;
     }
-    if (listen(listen_fd, 1024) < 0) {
+    
+    // todo 主意listen的参数
+    if (listen(listen_fd, 65536) < 0) {
         return ERROR;
     }
     
@@ -87,14 +94,14 @@ void singal_handler(int signal)
                 p_quit = 1;
                 break;
             case SIGCHLD:
-                plog("child exited!");
+                plog("master: child exited!");
                 p_reap = 1;
                 break;
             case SIGALRM:
                 p_sigalarm = 1;
                 break;
             case SIGSEGV:
-                plog("segment fault :pid[%d]",getpid());
+                plog("master: segment fault :pid[%d]",getpid());
                 p_terminate = 1;
                 break;
             default:
@@ -111,7 +118,7 @@ void singal_handler(int signal)
                 p_quit = 1;
                 break;
             case SIGSEGV:
-                plog("segment fault :pid[%d]",getpid());
+                plog("worker: segment fault :pid[%d]",getpid());
                 exit(SIGSEGV);
                 break;
             default:
@@ -124,7 +131,6 @@ void singal_handler(int signal)
         process_get_status();
     }
 }
-
 
 void signal_init()
 {
@@ -141,28 +147,36 @@ void signal_init()
     }
 }
 
+/*各个模块实现自己的module_init函数*/
+void module_init(){
+
+    event_module.module_init();
+    upstream_module.module_init();
+}
 
 
 int main(int argc, const char * argv[])
 {
-    if(server_cfg.daemon){
-     //  daemon(1,0);
-    }
     //test();
     //exit(0);
-
     config_load();
-    signal_init();
-    plog("master %d run\n",getpid());
-    //create_worker_process();
-    if(process_status == MASTER){
-        //master_cycle_process();
-        listen_fd = startUp(server_cfg.port);// set listen fd and signal handler or ignore
-        set_nonblocking(listen_fd);
-        worker_cycle_process();
+    listen_fd = startUp(server_cfg.port);
+    set_nonblocking(listen_fd);
+
+    if(server_cfg.daemon){
+       daemon(1,0);
     }
-    else{
-        plog("worker %d run",getpid());
+    signal_init();
+    module_init();
+    plog("master %d run\n",getpid());
+    create_worker_process();
+    
+    if(process_status == MASTER){
+        master_cycle_process();
+
+    }else{
+        worker_cycle_process();
+        plog("worker %d listen to %d run",getpid(),listen_fd);
     }
     return 0;
 }

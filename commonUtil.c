@@ -28,6 +28,25 @@ int p_ceil(float x){
 }
 
 void plog(const char* format, ...) {
+#ifdef DEBUG    
+    FILE* log_file = fopen(LOG_DIR "pserver.log", "a+");
+    if (log_file == NULL) {
+        printf("open log failed\n");
+        perror("open failed\n");
+        return;
+    }
+    
+    fprintf(log_file, "[pid: %5d]",getpid());
+    va_list args;
+    va_start(args, format);
+    vfprintf(log_file, format, args);
+    va_end(args);
+    fprintf(log_file, "\n");
+    fclose(log_file);
+#endif
+}
+
+void plog_debug(const char* format, ...){
     FILE* log_file = fopen(LOG_DIR "pserver.log", "a+");
     if (log_file == NULL) {
         printf("open log failed\n");

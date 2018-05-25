@@ -177,7 +177,7 @@ void testParseOneCase(buffer_t *buf,char *s,int path_len,int host_len,
 
     buf->begin = buf->data;
     buf->end = buf->data + len;
-    int ret = http_parse_request_line(r, buf);
+    int ret = parse_request_line(r, buf);
     ABORT_ON(ret != OK, "test request line failed!!!");
     ABORT_ON(r->uri.abs_path.len != path_len, "parse abs path failed!!!");
     ABORT_ON(r->uri.host.len != host_len, "parse host failed!!!");

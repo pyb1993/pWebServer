@@ -26,7 +26,7 @@
 void event_accept(event_t *ev)
 {
     connection_t* listenning = ev->data;
-    
+    static bool first = false;
     while(1)
     {
         // 接收客户端连接
@@ -34,33 +34,35 @@ void event_accept(event_t *ev)
         socklen_t c_len = sizeof(client);
 
         int conn_fd = accept(listenning->fd,(struct sockaddr*)&client,&c_len);//这里是可能阻塞的
-        if(conn_fd == -1){
+        plog("try to accept one connection");
+        
+        if(conn_fd <= 0){
             ERR_ON((errno != EWOULDBLOCK), "accept error");
-            int err = errno;
+            
             break;
         }
         else{
-            plog("accept connection %d", conn_fd);
+            #ifdef DEBUG
+                plog("accept connection %d,port: %d", conn_fd,ntohs(client.sin_port));
+            #endif
         }
         
-        // 因为上一个事件里面的timedout可能是1,所以这里要进行处理,但是将处理延迟到分配到该事件之后进行
-        if (ev->timedout) {
-            ev->timedout = 0;
-        }
         
         //获取一个空闲连接对象
-        //延迟分配connection的内存池
         connection_t* c = getIdleConnection();
         if(c == NULL){
             close(conn_fd);
+            ERR_ON((c == NULL), "connection pool is empty");
             return;
         }
+        
         //给新连接对象赋值
         c->fd = conn_fd;
-        c->side = C_DIRECTSTREAM;
+        c->is_connected = true;
         
         // 获取ip地址,但是需要对ip地址进行hash
         c->ip = client.sin_addr.s_addr;
-        http_init_connection(c);      //ngx_http_init_connection
+
+        init_connection(c);      //ngx_http_init_connection
     }
 }

@@ -17,6 +17,7 @@ int process_status = MASTER;// worker/master/single
 // exited = 1,exiting = 0,respawn = 1,就需要重新拉起,但是如果拉起失败,live还是不会变为1
 int reap_children(vector* workers)
 {
+    plog("try to repeat the worker");
     int live = 0;
     for(int i = 0; i < workers->used; ++i)
     {
@@ -26,18 +27,23 @@ int reap_children(vector* workers)
         
         if(worker->exited)
         {
+            plog("worker(%d) exited",pid);
             if(worker->respawn && !worker->exiting && !p_quit && !p_terminate)
             {
                 //需要重新拉起来挂掉的进程
+                // todo
+                
+                
+                
+                
+                
                 //拉起失败
                 continue;
                 //拉起成功
                 worker->pid = 1000;
                 live = 1;
             }
-        }
-        else
-        {
+        }else{
             //没有挂掉
             live = 1;
         }
@@ -46,8 +52,9 @@ int reap_children(vector* workers)
 }
 
 
-// 用来处理退出子进程的status
-// 这个函数会对process的exited和respawn做处理
+/* 用来处理退出子进程的status
+   这个函数会对process的exited和respawn做处理
+ */
 void process_get_status(){
     int one = 0;
     while(1)
@@ -69,13 +76,12 @@ void process_get_status(){
             
             if(errno == ECHILD){
                 // 调用进程没有子进程,同时一个都没有catch到(可能是同时引起了多个process_get_status调用)
-                printf("error on waitpid, ECHILD");
+                plog("error on waitpid, ECHILD");
                 return;
             }
-            printf("error on waitpid, ECHILD");
+            plog("error on waitpid, ECHILD");
             return;
         }
-        
         
         one = 1;
         for (int i = 0; i < server_cfg.workers.used; i++) {
@@ -99,13 +105,13 @@ void create_worker_process(){
         }
         else{
             process_status = MASTER;
-            printf("create worker %d \n",pid);
+            plog("create worker %d \n",pid);
             worker_t *worker;
             worker = vectorPush(&(server_cfg.workers));
             worker->pid = pid;
             worker->exited = 0;
             worker->exiting = 0;
-            worker->respawn = 0;
+            worker->respawn = 1;//这个进程需要被重启
         }
     }
 }
@@ -131,17 +137,6 @@ void master_cycle_process()
                 p_sigalarm = 0;
             }
             
-            /*
-             *  struct itimerval {
-             *      struct timeval it_interval;
-             *      struct timeval it_value;
-             *  };
-             *  struct timeval {
-             *      long tv_sec;
-             *      long tv_usec;
-             *  };
-             *
-             */
             itv.it_interval.tv_sec = 0;
             itv.it_interval.tv_usec = 0;
             itv.it_value.tv_sec = delay / 1000;

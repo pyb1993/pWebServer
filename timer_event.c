@@ -19,6 +19,7 @@ rbtree_node_t  event_timer_sentinel = {
     .right = &event_timer_sentinel,
     .color = 0
 };
+
 int current_msec = 0;
 
 /* 定时器事件初始化 */
@@ -55,7 +56,6 @@ void event_add_timer(event_t *ev, msec_t timer)
     if (ev->timer_set) {
         
         /*如果该事件已经在定时器里面了,那么如果时间相差不远,就直接忽略这次add操作,提高性能*/
-        
         diff = (msec_t) (key - ev->timer.key);
         
         if (p_abs(diff) < TIMER_LAZY_DELAY) {
@@ -65,11 +65,8 @@ void event_add_timer(event_t *ev, msec_t timer)
     }
     
     ev->timer.key = key;
-    
-    
     /* 将事件对象节点插入到红黑树中 */
     rbtree_insert(&event_timer_rbtree, &ev->timer);
-    
     
     /* 设置标志位 */
     ev->timer_set = 1;
@@ -136,7 +133,7 @@ void event_expire_timers(void)
             /* 调用已超时事件的处理函数对该事件进行处理,因为已经超时了,所以必须马上处理 */
             connection_t *c = ev->data;
             ev->handler(ev);
-            ev->timer_set = 0;/* 0表示不受监控 */
+            //ev->timer_set = 0;/* 0表示不受监控 */
             continue;
         }
         break;

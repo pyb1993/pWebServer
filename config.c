@@ -23,34 +23,24 @@ config server_cfg;
 
 hash* create_location_map(){
     static string loc_name_arr[] = {
-        STRING("rails/1"),
-        STRING("rails/2"),
-        STRING("rails/3"),
+        STRING("backend")
     };
     
     // 认为不同的端口对应着不同的服务,weight设置的不一样
+    
     static location_t locations_1[] = {
         LOCATION("127.0.0.1",3010,2),
         LOCATION("127.0.0.1",3011,3),
-        LOCATION("127.0.0.1",3012,4),
-        LOCATION("127.0.0.1",3013,5),
-        LOCATION("127.0.0.1",3014,6)};
-    
-    static location_t locations_2[] = {
-        LOCATION("127.0.0.1",3015,1),
+        LOCATION("127.0.0.1",3012,2),
+        LOCATION("127.0.0.1",3013,3),
+        LOCATION("127.0.0.1",3014,3),
+        LOCATION("127.0.0.1",3015,2),
         LOCATION("127.0.0.1",3016,3),
         LOCATION("127.0.0.1",3017,2),
-        LOCATION("127.0.0.1",3018,4),
-        LOCATION("127.0.0.1",3019,5)};
-    
-    static location_t locations_3[] = {
-        LOCATION("127.0.0.1",3020,2),
-        LOCATION("127.0.0.1",3021,3),
-        LOCATION("127.0.0.1",3022,4),
-        LOCATION("127.0.0.1",3023,1),
-        LOCATION("127.0.0.1",3024,7)};
-    
-    static location_t* locations[3] = {locations_1,locations_2,locations_3};
+        LOCATION("127.0.0.1",3018,3),
+        LOCATION("127.0.0.1",3019,3)};
+        
+    static location_t* locations[1] = {locations_1};
 
     static hash_key location_ele_array[MAX_LOCATION_SZIE];
     
@@ -83,13 +73,13 @@ hash* create_location_map(){
 
 int config_load(){
     server_cfg.port = 3001;
-    server_cfg.worker_num = 1;
+    server_cfg.worker_num = 8;
     server_cfg.daemon = 1;
-    server_cfg.max_connections = 4096;
-    server_cfg.request_pool_size = 4096;
+    server_cfg.max_connections = 65536;//这里的链接包括后端的链接数量
+    server_cfg.request_pool_size = 4096 * 2;
     server_cfg.upstream_timeout = 8 * 1000;// 8 s
-    server_cfg.post_accept_timeout = 8 * 1000;// standard: 15s
-    server_cfg.keep_alive_timeout = 1000 * 1000;// keep alive 30s
+    server_cfg.post_accept_timeout = 15 * 1000;// standard: 15s
+    server_cfg.keep_alive_timeout = 30 * 1000;// keep alive 30s
     server_cfg.root_fd = open("/Users/pyb/Documents/workspace/pWebServer/pWebServer", O_RDONLY);
     server_cfg.timer_resolution = 500;
     server_cfg.load_balance = ROUND_MODE;

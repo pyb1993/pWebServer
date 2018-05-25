@@ -80,11 +80,26 @@ int init_before_round(http_request_t* r, string* target_domain){
 }
 
 /*
- 在挑选一次之后,需要尝试链接该服务器
+ 在挑选到可用的服务器之后,需要尝试connect该服务器
+ 如果发现本次连接当场失败,那么需要
+    1 关闭对应的fd,下一次尝试的时候重新获取(如果不关闭,fd上有错误状态是没有办法继续connect的)
+    2 移除对应的事件监听
+    3 移除定时器
+ 这里有一个陷阱,如果先执行close,会将2直接移除,但是event->active状态没有改变,这会导致状态不一致
+ 所以我们的策略是先执行2(在2里面会执行3),然后再进行close
+ -------------如果当场成功或者返回EINPROGRESS--------
+    1 成功 直接处理,设置后面的回调并且初始化
+    2 EINPROGRESS,把剩下的问题交给回调函数解决
+ 
  */
 int try_connect(http_request_t *r,upsream_server_t* us){
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if(fd == -1){
+    
+    int fd = r->upstream->fd;
+    if(r->upstream->fd <= 0){
+        fd = r->upstream->fd = socket(AF_INET, SOCK_STREAM, 0);
+    }
+    
+    if(fd <= 0){
         plog("err on get a socket ,errno: %d",errno);
         return ERROR;
     }
@@ -93,7 +108,6 @@ int try_connect(http_request_t *r,upsream_server_t* us){
     bzero(&addr, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(us->location->port);
-    
     int success = inet_pton(AF_INET, us->location->host.c, &addr.sin_addr);
     if (success <= 0) {
         plog("err pm omet_pton,errno:%d",errno);
@@ -103,38 +117,41 @@ int try_connect(http_request_t *r,upsream_server_t* us){
     // 尝试connect,需要处理三种情况
     /*  case1.最可能的情况是直接成功
         case2.返回EINPROGRESS错误,那么需要设置定时器检查是否超时
-        case3.被信号打断了系统调用,忽略之后继续connect
-        case4.其他错误
+        case3.其他错误
      */
-    while(1){
-        int err = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
-        if(err == OK){
-            // case1 在这里输出对应的port
-            struct sockaddr_in local_address;
-            int addr_size = sizeof(local_address);
-            getsockname(fd, &local_address, &addr_size);
-            
-            plog("upstream server => backend  => port : %d => %d => %d",r->connection->fd,fd,ntohs(local_address.sin_port));
-            r->cur_upstream = us;
-            init_upstream_connection(r,r->upstream,fd);
-            return OK;
-        }
-        if(errno == EINPROGRESS || errno == EAGAIN){
-            // case 2
-            r->upstream->wev->handler = process_connection_result_of_upstream;
-            event_add_timer(r->upstream->wev, server_cfg.post_accept_timeout);
-            return OK;
-        }else if(errno == EINTR){
-            // case 3
-            
-        }else{
-            // case 4
-            plog("server(%d) connect to upstream(%s:%d) failed,errno:%d",
-                 r->connection->fd,
-                 us->location->host.c,
-                 us->location->port,errno);
-            return ERROR;
-        }
+    set_nonblocking(fd);
+    int err = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
+    if(err == OK){
+        // case1 在这里输出对应的port
+#ifdef DEBUG
+        struct sockaddr_in local_address;
+        int addr_size = sizeof(local_address);
+        getsockname(fd, &local_address, &addr_size);
+        plog("connect to upstream succ:info: server => backend  => port : %d => %d => %d",r->connection->fd,fd,ntohs(local_address.sin_port));
+#endif
+        
+        r->cur_upstream = us;
+        init_upstream_connection(r,r->upstream,fd);
+        return OK;
+    }
+    if(errno == EINPROGRESS){
+        // case 2
+        r->cur_upstream = us;
+        r->upstream->wev->handler = process_connection_result_of_upstream;
+        add_event(r->upstream->wev,WRITE_EVENT,0);
+        event_add_timer(r->upstream->wev, server_cfg.post_accept_timeout);
+        return AGAIN;
+    }else{
+        // case 3
+        del_event(r->upstream->wev,WRITE_EVENT,0);// 自动删除定时器
+        socklen_t len = sizeof(err);
+        getsockopt(fd,SOL_SOCKET,SO_ERROR,&err,&len);//清除错误
+        plog("server(%d) connect to upstream(%s:%d) failed immediately,errno:%d",
+             r->connection->fd,
+             us->location->host.c,
+             us->location->port,errno);
+        
+        return ERROR;
     }
     return ERROR;
 }
@@ -253,29 +270,36 @@ void get_server_by_round(http_request_t*r,string* domain){
         upsream_server_t* us = get_server_by_round_once(server_domain);
         r->upstream_tries++;
 
+        // 当前的这个服务处于fail状态,尝试下一个
         if(us == NULL){
             continue;
         }
         
         /* 找到一个目前处于可用状态的后端服务,尝试connect,并且设置相应回调函数
            结果有两种情况
-           case 1: OK,说明connect已经发送出去了/直接成功.
-           case 2: ERROR,某个系统调用或者connect出现错误,继续尝试其他服务
+           case 1: OK,说明connect直接成功.
+           case 2: AGAIN,留给回调处理
+           case 3: ERROR,某个系统调用或者connect出现错误,继续尝试其他服务
          */
+        plog("try to connect to port:%d",us->location->port);
         int err = try_connect(r,us);
-        if(err == OK){
-            break;
+        if(err == OK || err == AGAIN){
+            return;
         }else{
             us->state = UPSTREAM_CONN_FAIL;
             free_server_after_round_select(us);
         }
     }
     
-    // worst case,所有服务都挂了
+    /* Worst Case:
+       所有服务都挂了
+       我们保证fd一定会在process_connection_result_of_upstream
+       或者try_connect里面得到正常的关闭,事件也会得到妥善处理
+      
+       这里有一个bug,如果所有服务都挂了
+     
+     */
     if(r->upstream_tries >= server_domain->nelts){
-        if(r->upstream->wev->timer_set){
-            event_del_timer(r->upstream->wev);
-        }
         construct_err(r, r->connection, 502);
     }
 }
@@ -482,16 +506,32 @@ failed:;
     return;
 }
 
-/*初始化upstream connection的各个属性*/
+/*在和后端服务成功链接上之后执行,设置对应的回调函数
+  并且修改写事件的定时器即可
+ */
 void init_upstream_connection(http_request_t* r,connection_t * upstream,int fd){
     event_t *wev = upstream->wev;
     event_t *rev = upstream->rev;
-    //wev->timedout = 0;
-    upstream->side = C_UPSTREAM;
+    upstream->is_connected = true;
     wev->handler = http_proxy_pass;//将 recv buffer里面的数据 转发 到backend
     upstream->rev->handler = http_recv_upstream;//第一个步骤是分配相关的buffer
     upstream->fd = fd;
-    upstream->data = r;
-    set_nonblocking(upstream->fd);
+    
+    /*强行关闭,这里只是为了测试的时候使用*/
+    /*
+    struct linger so_linger;
+    so_linger.l_onoff = 1;
+    so_linger.l_linger = 0;
+    int ret = setsockopt(fd,
+                   SOL_SOCKET,
+                   SO_LINGER,
+                   &so_linger,
+                   sizeof(so_linger));
+    if(ret){
+        plog("err on set so_linger");
+    }*/
     add_event(rev,READ_EVENT,0);//监听读事件,这个事件应该一直开启
+    
+    // todo change the timer
+    event_add_timer(wev, server_cfg.upstream_timeout);
 }

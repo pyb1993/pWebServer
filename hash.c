@@ -219,20 +219,12 @@ void* hash_find(hash* h, char * name, size_t len){
     int idx = key % h->size;
     hash_slot* bucket = h->buckets[idx];
     while(bucket->value != NULL){
-        if (len != (size_t) bucket->len) {/* 判断长度是否相等 */
-            goto next;
+        if (len == (size_t) bucket->len &&
+            strncmp(name,&bucket->name[0], len) == 0) {
+            return bucket->value;
         }
-        
-        for (int i = 0; i < len; i++) {
-            if (name[i] != bucket->name[i]) {/* 若长度相等，则比较name的内容 */
-                goto next;
-            }
-        }
-        return bucket->value;
-        
-    next:
+
         bucket = (hash_slot *)align_ptr(&bucket->name[0] + bucket->len,sizeof(void*));
-        continue;
     }
     return NULL;
 }

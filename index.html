@@ -10,6 +10,7 @@
     <title>欢迎来到PYB的WEB服务器</title>
 </head>
 <body>
+    <li>(PwebServer)
     <li>这里是我用C语言构建的一个http服务器,参考了nginx的设计思路和网上的部分http服务器源码。
     <li>采取异步非阻塞的网络IO方式(事件+回调函数),用事件模块进行管理不同的事件驱动机制(目前只支持kqueue,todo: epoll,select)
     <li>进程管理方面和Nginx保持一致,采取一个Master,多个worker。Master会对woker进行监控

@@ -41,8 +41,10 @@ typedef enum{
     HD_COLON,
     HD_BEFORE_VALUE,
     HD_VALUE,
-    HD_ALMOST_DONE    
-    
+    HD_ALMOST_DONE,
+    // body完成
+    BODY_RECV_BEGIN,
+    BODY_RECV_DONE
 } req_state_t;
 
 typedef enum{
@@ -141,9 +143,8 @@ typedef struct {
     uint16_t port;
 } location_t;
 
-void http_init_connection(connection_t* c);
 void ngx_http_process_request_line(event_t* rev);
-int http_parse_request_line(http_request_t* r,buffer_t* b);
+int parse_request_line(http_request_t* r,buffer_t* b);
 int parse_request_method(char * begin,char * end);
 int parse_uri(uri_t*,char *begin);
 void http_init_request(event_t* rev);
@@ -153,7 +154,7 @@ int send_file(http_request_t* r);
 void handle_response_file(event_t*);
 void http_response_done();
 http_request_t* create_http_request();
-void request_handle_headers(event_t* rev);
+void http_parse_headers(event_t* rev);
 void request_handle_body(event_t * rev);
 int parse_request_body_identity(http_request_t* r);
 int request_process_uri(http_request_t* r);

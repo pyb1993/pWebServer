@@ -14,8 +14,10 @@
 #include "string_t.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include "shared_memory.h"
 
 int event_process_init();
+int event_module_init();
 int upstream_process_init();
 int upstream_module_init();
 
@@ -47,4 +49,6 @@ typedef struct {
 extern module_t event_module;
 extern module_t upstream_module;
 extern event_actions_t event_actions;
+extern shmtx_t   accept_mutex;
+
 #endif /* p_event_h */

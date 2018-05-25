@@ -52,11 +52,6 @@ abort();                    \
 #define MASTER 0
 #define WORKER 1
 #define SINGLE 2
-
-#define C_UPSTREAM 1
-#define C_DIRECTSTREAM 20
-#define C_IDLE 3
-
 #define LOG_DIR "/usr/local/log/"
 
 

@@ -28,7 +28,7 @@ typedef struct config{
     int keep_alive_timeout;// 一个keep alive的请求可以持续多久
     int upstream_timeout;
     vector workers;
-    hash* locations;// 用来需要转发的path
+    hash* locations;// 设定了location => ip+port的映射
     void* loc_name_arr;//暂时 用来在全局传递域名
     int domain_num;// 需要转发的域名的个数
     int load_balance; // 负载均衡的模式

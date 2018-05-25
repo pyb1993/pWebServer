@@ -16,6 +16,9 @@
 #include "commonUtil.h"
 #include <sys/time.h>
 
+/*对应的共享内存的全局变量*/
+shmtx_t   accept_mutex;
+
 /*******构建event_module***************/
 event_actions_t event_actions;
 
@@ -33,7 +36,7 @@ module_t event_module = {
     STRING("event module"),
     &event_module_ctx,                  /* module context */
     &event_process_init,               /* init process */
-    NULL,                             /* init module */
+    &event_module_init,                             /* init module */
 };
 
 
@@ -52,7 +55,7 @@ int upstream_process_init(){
     servers.server_ip_arr = (upsream_server_arr_t*)malloc(sizeof(upsream_server_arr_t) * servers.nelts);
     for(int i = 0; i < servers.nelts; ++i){
         upsream_server_arr_t* server_arr = servers.server_ip_arr + i;
-        server_arr->nelts = 5;// 这里写死; todo以后依靠配置文件来定
+        server_arr->nelts = 10;// 这里写死; todo以后依靠配置文件来定
         server_arr->init_state = IDLE;//写好初始化状态
         server_arr->upstream_server = (upsream_server_t*)malloc(server_arr->nelts * sizeof(upsream_server_t));
         string* domain_name = (string*)server_cfg.loc_name_arr + i;
@@ -68,7 +71,7 @@ int upstream_process_init(){
             upstream_server->location = one_server_loc;
             upstream_server->current_weight = 0;
             upstream_server->status_changed = 0;
-            upstream_server->max_fails = 1;
+            upstream_server->max_fails = (server_cfg.load_balance == ROUND_MODE) ? 1 : 3;
             upstream_server->fails = 0;
             upstream_server->fail_timeout = one_server_loc->fail_timedout;
         }
@@ -85,10 +88,48 @@ int upstream_process_init(){
     return OK;
 };
 
-
+/*在所有进程启动之前运行的函数*/
 int upstream_module_init(){
     return OK;
 };
+
+
+
+
+/*目前来说,暂时只进行了共享内存的分配
+  和具体模块类型没有关系*/
+int event_module_init(){
+    size_t               size, cl;
+    shm_t shm;// 本地分配的一个变量
+    // 要大于或等待cache line
+    cl = 128;
+    size = cl            /* ngx_accept_mutex */
+    + cl          /* ngx_connection_counter */
+    + cl;         /* ngx_temp_number */
+    
+    shm.size = size;
+    shm.name.len = sizeof("nginx_shared_zone");
+    shm.name.c = "nginx_shared_zone";
+    
+    // 创建共享内存
+    if (shm_alloc(&shm) != OK) {
+        return ERROR;
+    }
+    // shm为创建的共享内存
+    // 因为之前有预留128字节，所以shared指向它是没有问题的
+    void* shared = shm.addr;
+    
+    // 这个锁不进行自旋
+    accept_mutex.spin = (uint) -1;
+
+    // 将accept_mutex的locked指向shared
+    if (shmtx_create(&accept_mutex, shared)
+        != OK){
+        return ERROR;
+    }
+    return OK;
+}
+
 
 
 // 用来在每一个worker开始的时候进行初始化,通过对应的配置来选择对应的事件驱动模型
