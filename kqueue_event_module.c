@@ -130,14 +130,14 @@ void kqueue_process_events(msec_t timer,int flags){
             if(event.filter == EVFILT_READ){
                 // 处理读的事件
                 connection_t* c = event.udata;
-                event_t* rev = c->rev;
+                event_t* rev = &c->rev;
                 if(rev->handler){
                     rev->handler(rev);
                 }
             }
             else if(event.filter == EVFILT_WRITE) {
                 connection_t* c = event.udata;
-                event_t* wev = c->wev;
+                event_t* wev = &c->wev;
                 if(wev->handler){
                     wev->handler(wev);
                 }
@@ -145,9 +145,9 @@ void kqueue_process_events(msec_t timer,int flags){
         }
 }
 
+
 // 单独用来处理属于kqueue的部分
-int kqueue_process_init()
-{
+int kqueue_process_init(){
     event_actions = ((event_module_t*)kqueue_module.ctx)->actions;
     event_actions.event_init();// 初始化kqueue事件相关
     return OK;

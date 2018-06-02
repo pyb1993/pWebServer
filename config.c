@@ -73,10 +73,11 @@ hash* create_location_map(){
 
 int config_load(){
     server_cfg.port = 3001;
-    server_cfg.worker_num = 8;
+    server_cfg.worker_num = 1;
     server_cfg.daemon = 1;
     server_cfg.max_connections = 65536;//这里的链接包括后端的链接数量
-    server_cfg.request_pool_size = 4096 * 2;
+    int req_padding_size = (((sizeof(http_request_t) + 2 * sizeof(buffer_t)) >> 8) << 8) + 128;// 这里是为了对齐
+    server_cfg.request_pool_size = sizeof(buffer_t) + req_padding_size;
     server_cfg.upstream_timeout = 8 * 1000;// 8 s
     server_cfg.post_accept_timeout = 15 * 1000;// standard: 15s
     server_cfg.keep_alive_timeout = 30 * 1000;// keep alive 30s
@@ -85,6 +86,6 @@ int config_load(){
     server_cfg.load_balance = ROUND_MODE;
     // 初始化locations
     server_cfg.locations = create_location_map();
-    vectorInit(&server_cfg.workers,server_cfg.worker_num,sizeof(struct worker_t));
+    vectorInit(&server_cfg.workers,2 * server_cfg.worker_num,sizeof(struct worker_t));
     return OK;
 }

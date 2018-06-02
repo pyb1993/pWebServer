@@ -148,25 +148,23 @@ int event_process_init()
     }
 
     
-    // 初始化事件集合
-    r_events = malloc(sizeof(event_t) * (server_cfg.max_connections + 10));
-    w_events = malloc(sizeof(event_t) * (server_cfg.max_connections + 10));
-    
     // 初始化链接池
     connectionPoolInit(server_cfg.max_connections);
     
     // 对listenning fd进行监听,分配对应的链接,和事件
     connection_t* c = getIdleConnection();
+    listen_connection = c;
     c->fd = listen_fd;
     
     // 设置读事件和链接的关系
-    event_t* rev = c->rev;
+    event_t* rev = &c->rev;
+    rev->data = c;
     
     //设置连接回调，当有客户端连接时，将触发回调
     rev->handler = event_accept;
     
-    //如果work进程之间没有使用锁，则把读事件加入epoll中
-    //此时写事件的回调为NULL，因为在ngx_get_idle_connection函数中会把整个结构进行清0操作
+    /*如果work进程之间没有使用锁，则把读事件加入epoll中
+    此时写事件的回调为NULL，因为在ngx_get_idle_connection函数中会把整个结构进行清0操作*/
     if (add_event(rev, READ_EVENT, 0) == ERROR)
     {
         plog("add listenning to eventloop failed!!!");

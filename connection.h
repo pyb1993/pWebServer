@@ -15,7 +15,7 @@
 #include "memory_pool.h"
 #include "string_t.h"
 
-#define BUF_SIZE 2048
+#define BUF_SIZE 1024
 
 typedef struct buffer_s{
     char * begin;
@@ -33,10 +33,10 @@ typedef struct connection {
     int fd;
     uint32_t ip;
     void * data;//用来保存request
-    event_t* rev;
-    event_t* wev;
+    event_t rev;
+    event_t wev;
     bool is_connected;
-    bool used_now;
+    bool is_idle;
 } connection_t;
 
 // 链接池对象
@@ -55,6 +55,7 @@ int append_string_to_buffer(buffer_t* buffer, const string* str);
 int buffer_sprintf(buffer_t* buffer, const char* format,...);
 buffer_t* createBuffer(memory_pool* pool);
 void buffer_clear(buffer_t* buffer);
+void clear_idle_connections();
 int buffer_send(buffer_t* buffer, int fd);
 int buffer_size(buffer_t*buffer);
 bool buffer_full(buffer_t* buffer);

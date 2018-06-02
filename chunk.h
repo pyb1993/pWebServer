@@ -22,5 +22,6 @@ typedef struct chunk{
 
 
 int chunkInit(chunk* c,int unit_size,int unit_num);
+void* get_data_from_chunk(chunk_slot* chunk_slot_ele);
 
 #endif /* chunk_h */

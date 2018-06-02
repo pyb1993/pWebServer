@@ -137,13 +137,13 @@ int try_connect(http_request_t *r,upsream_server_t* us){
     if(errno == EINPROGRESS){
         // case 2
         r->cur_upstream = us;
-        r->upstream->wev->handler = process_connection_result_of_upstream;
-        add_event(r->upstream->wev,WRITE_EVENT,0);
-        event_add_timer(r->upstream->wev, server_cfg.post_accept_timeout);
+        r->upstream->wev.handler = process_connection_result_of_upstream;
+        add_event((&r->upstream->wev),WRITE_EVENT,0);
+        event_add_timer((&r->upstream->wev), server_cfg.post_accept_timeout);
         return AGAIN;
     }else{
         // case 3
-        del_event(r->upstream->wev,WRITE_EVENT,0);// 自动删除定时器
+        del_event((&r->upstream->wev),WRITE_EVENT,0);// 自动删除定时器
         socklen_t len = sizeof(err);
         getsockopt(fd,SOL_SOCKET,SO_ERROR,&err,&len);//清除错误
         plog("server(%d) connect to upstream(%s:%d) failed immediately,errno:%d",
@@ -510,11 +510,11 @@ failed:;
   并且修改写事件的定时器即可
  */
 void init_upstream_connection(http_request_t* r,connection_t * upstream,int fd){
-    event_t *wev = upstream->wev;
-    event_t *rev = upstream->rev;
+    event_t *wev = &upstream->wev;
+    event_t *rev = &upstream->rev;
     upstream->is_connected = true;
     wev->handler = http_proxy_pass;//将 recv buffer里面的数据 转发 到backend
-    upstream->rev->handler = http_recv_upstream;//第一个步骤是分配相关的buffer
+    upstream->rev.handler = http_recv_upstream;//第一个步骤是分配相关的buffer
     upstream->fd = fd;
     
     /*强行关闭,这里只是为了测试的时候使用*/

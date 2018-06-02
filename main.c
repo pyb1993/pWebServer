@@ -20,6 +20,7 @@
 
 
 int listen_fd;
+connection_t* listen_connection;
 event_t* r_events;
 event_t* w_events;
 
@@ -44,11 +45,6 @@ int set_nonblocking(int sockfd){
 // 获取一个listen socekt
 int startUp(int port)
 {
-    
-    if(getpid() % 2 == 0){
-        int f =  socket(PF_INET, SOCK_STREAM, 0);
-    }
-    
     listen_fd = 0;
     struct sockaddr_in server_addr = {0};
     int addr_len = sizeof(server_addr);
@@ -75,8 +71,6 @@ int startUp(int port)
         return ERROR;
     }
     
-    //应该将listen_fd添加到ji
-    
     return listen_fd;
 }
 
@@ -88,9 +82,11 @@ void singal_handler(int signal)
     if(process_status == MASTER){
         switch (signal) {
             case SIGINT:
+                plog("master: exit!");
                 p_terminate = 1;
                 break;
             case SIGQUIT:
+                plog("master: shutting down!");
                 p_quit = 1;
                 break;
             case SIGCHLD:
@@ -112,9 +108,11 @@ void singal_handler(int signal)
         switch (signal)
         {
             case SIGINT:
+                plog("worker: exit!");
                 p_terminate = 1;
                 break;
             case SIGQUIT:
+                plog("worker: shutting dow!");
                 p_quit = 1;
                 break;
             case SIGSEGV:
@@ -173,7 +171,6 @@ int main(int argc, const char * argv[])
     
     if(process_status == MASTER){
         master_cycle_process();
-
     }else{
         worker_cycle_process();
         plog("worker %d listen to %d run",getpid(),listen_fd);

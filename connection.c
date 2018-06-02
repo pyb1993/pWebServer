@@ -17,23 +17,21 @@
 #include "commonUtil.h"
 
 connection_pool_t connection_pool;
-//static connection_t * pos[100000];
-int iii = 0;
 void connectionPoolInit(int max_connections){
-    max_connections = (max_connections / 8);
-    poolInit(&connection_pool.cpool, sizeof(connection_t), 8, max_connections);
+    //max_connections = (max_connections / 8);
+    poolInit(&connection_pool.cpool, sizeof(connection_t), 8, 0);
 
-    //给所有的connection初始化
-    int idx = 0;
-    vector* vc = &(connection_pool.cpool.chunks);
+    /*给所有的connection初始化*/
+    //int idx = 0;
+    //vector* vc = &(connection_pool.cpool.chunks);
     
-    for(int i = 0;i < vc->capacity;++i){
+    /*不进行任何初始化*/
+    /*
+    for(int i = 0;i < vc->capacity; ++i){
         chunk* ch = vectorAt(vc,i);
         connection_t* con = ch->data;
-
         for(int k = 0; k < 8; ++k){
             // 注意这里要先保存next的值,否则会被覆盖
-            //pos[iii++] = con;
             connection_t* next_con = ((chunk_slot*)con)->next;
             con->rev = &r_events[idx];
             con->wev = &w_events[idx];
@@ -43,7 +41,7 @@ void connectionPoolInit(int max_connections){
             con = next_con;
             idx++;
         }
-    }
+    }*/
 }
 
 // 用来debug的一个函数
@@ -81,22 +79,29 @@ void test_connection(){
     2 将rev和wev对应的handler清空,这种情况下,即便被stable event唤醒,也不会调用这个handler
  
     3 因为所有的event都是静态分配的,所以需要保存以前分配好的event
- 
-    4
- 
  */
 connection_t* getIdleConnection(){
-    vector* vc = &(connection_pool.cpool.chunks);
-    if(connection_pool.cpool.used < vc->capacity * 8){
+    static int event_alloc_pos = 0;// 记录第几个event被绑定到分配的connection上面了
+    if(connection_pool.cpool.used <  server_cfg.max_connections){
         connection_t *c = poolAlloc(&(connection_pool.cpool));
-        event_t* rev = c->rev;
-        event_t* wev = c->wev;
+        /*
+        if(c->rev == NULL || c->wev == NULL){
+            rev = &r_events[event_alloc_pos];
+            wev = &w_events[event_alloc_pos];
+            wev->data = c;
+            rev->data = c;
+            event_alloc_pos++;
+        }else{
+            rev = c->rev;
+            wev = c->wev;
+        }*/
+
         memzero(c, sizeof(connection_t));
+        c->rev.data = c;
+        c->wev.data = c;
         c->fd = -33;
-        c->rev = rev;
-        c->wev = wev;
-        rev->handler = NULL;
-        wev->handler = NULL;
+        c->rev.handler = NULL;
+        c->wev.handler = NULL;
         return c;
     }
     
@@ -106,9 +111,7 @@ connection_t* getIdleConnection(){
 
 void init_connection(connection_t* c)
 {
-    event_t* rev = c->rev;
-    
-    // todo 这里似乎不需要设置,因为在删除的时候已经设置了timedout rev->timedout = 0;//设置超时状态
+    event_t* rev = &c->rev;
     
     //读事件回调
     rev->handler = http_init_request;//应该是init_request函数
@@ -117,8 +120,7 @@ void init_connection(connection_t* c)
     event_add_timer(rev, server_cfg.post_accept_timeout);
     
     // 将读事件注册到kqueue中，这个阶段暂时不需要关注写事件
-    if (add_event(rev, READ_EVENT, 0) == ERROR)
-    {
+    if (add_event(rev, READ_EVENT, 0) == ERROR){
         return;
     }
     
@@ -157,19 +159,20 @@ void http_close_connection(connection_t* c)
     }
     
     // 删除相关的定时器事件
-    if (c->rev->timer_set) {
-        event_del_timer(c->rev);
+    if (c->rev.timer_set) {
+        event_del_timer(&c->rev);
     }
     
-    if (c->wev->timer_set) {
-        event_del_timer(c->wev);
+    if (c->wev.timer_set) {
+        event_del_timer(&c->wev);
     }
     
     c->fd = -10086;
     c->data = NULL;
+    c->is_idle = false;
     c->is_connected = false;
-    c->rev->active = false;
-    c->wev->active = false;
+    c->rev.active = false;
+    c->wev.active = false;
     // 注意这里有一个bug,因为放回free链表里会导致fd被next占用
     poolFree(&connection_pool.cpool, c);//将链接还到正常的free链表里面,注意这里有一个bug
 }
@@ -261,7 +264,6 @@ int append_string_to_buffer(buffer_t* buffer, const string* str)
     assert(margin > 0);
     // todo: if the buffer is not enough,we should malloc a big buffer
     
-    
     int appended = min(margin, str->len);
     memcpy(buffer->end, str->c, appended);
     buffer->end += appended;
@@ -282,4 +284,33 @@ int buffer_sprintf(buffer_t* buffer, const char* format,...)
     return len;
 }
 
+/*
+ *在shutdown的时候关闭所有的空闲链接
+ 这样剩下的时间都是和活跃事件相关的链接了
+ 所以「所有事件结束」这个逻辑得以成立,否则空闲链接的过期事件监听会导致上述判断无法成立
+ 
+ @logic : 需要注意的是,怎么进行遍历,这里的遍历不能使用next(那是指向free的)
+          所以需要通过计算大小来进行遍历
+ 
+ */
+void clear_idle_connections(){
+    vector* vc = &(connection_pool.cpool.chunks);
+    for(int i = 0;i < vc->capacity; ++i){
+        chunk* ch = vectorAt(vc,i);
+        chunk_slot* cs = ch->data ;
+        for(int k = 0; k < 8; ++k){
+            /* 代表链接有效且处于idle状态
+             * upstream链接不会有idle == true的状态
+             */
+            
+            connection_t* c = get_data_from_chunk(cs);
+            if(c->fd > 0 && c->is_idle){
+                http_close_connection(c);
+            }
+
+            c->data = NULL;
+            cs = (uint8_t*)ch->data + (k + 1) * (sizeof(connection_t) + sizeof(void*));// 直接计算第k个chunk_slot
+        }
+    }
+}
 

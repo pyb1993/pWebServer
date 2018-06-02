@@ -35,6 +35,7 @@ typedef struct {
 extern config server_cfg;
 extern connection_pool_t connection_pool;
 extern int listen_fd;
+extern connection_t* listen_connection;
 extern event_t* r_events;
 extern event_t* w_events;
 

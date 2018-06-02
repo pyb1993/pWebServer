@@ -262,9 +262,9 @@ int construct_err(http_request_t* r,connection_t* c, int err) {
     buffer_append_cstring(b, "Content-Type: text/html" "\r\n");
     append_err_page(b,err);
     buffer_append_cstring(b, "\r\n");
-    add_event(c->wev,WRITE_EVENT,0);
-    del_event(c->rev,READ_EVENT,0);
-    c->wev->handler = handle_response;
+    add_event(&c->wev,WRITE_EVENT,0);
+    del_event(&c->rev,READ_EVENT,0);
+    c->wev.handler = handle_response;
     r->status = err;
     r->response_done = true;
     r->keep_alive = false;// 出错的情况,取消keep_alive

@@ -15,8 +15,9 @@ int poolInit(pool* p,int unit_size,int unit_num,int chunk_num){
     p->unit_size = unit_size;
     p->free = NULL;
 
+    /*在初始化链接池的数据结构的时候,没有必要立刻初始化过多的内存*/
     int err = vectorInit(&p->chunks, chunk_num,sizeof(chunk));
-    if(chunk_num == 0){
+    if(err != 0){
         return err;
     }
     
@@ -27,20 +28,20 @@ int poolInit(pool* p,int unit_size,int unit_num,int chunk_num){
             plog("pool init error");
             return err;
         }
-        if(i > 0){
-            chunk* last_chunk = vectorAt(&p->chunks,i - 1);
-            chunk_slot* last_chunk_slot = (char*)(last_chunk->data) + (unit_size) * (unit_num - 1);
-            last_chunk_slot->next = cur_chunk->data;
-        }
     }
     
+    /*
     chunk* first_chunk = vectorAt(&p->chunks,0);
     p->free = first_chunk->data;
-    return OK;
+   */
+     return OK;
 }
 
-
+/* 从pool里面分配一个较元素
+ * 注意需要跳过next
+ */
 void* poolAlloc(pool* p){
+    void* ret;
     p->used++;
     chunk_slot* new_chunk_slot;
     chunk* new_chunk;
@@ -54,9 +55,9 @@ void* poolAlloc(pool* p){
         p->free = new_chunk_slot;
     }
     
-    void* ret = p->free;
+    ret = (uint8_t*)p->free;
     p->free = ((chunk_slot*)ret)->next;
-    return ret;
+    return get_data_from_chunk(ret);
 }
 
 
@@ -66,7 +67,8 @@ void* poolAlloc(pool* p){
     if (x == NULL) {
         return;
     }
-    --p->used;
+     --p->used;
+     x = (uint8_t*)x - sizeof(void*);//回到真实的位置
     ((chunk_slot*)x)->next = p->free;
     p->free = x;
 }

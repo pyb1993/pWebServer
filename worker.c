@@ -22,7 +22,7 @@ int p_quit = 0;
 long delay = 0;
 int p_event_timer_alarm = 0;//是否收到相应的信号
 
-//向所有的worker发送信号
+// 向所有的worker发送信号
 void signal_worker_processes(vector* workers,int signo){
     for(int i = 0; i < workers->used; ++i){
         worker_t* worker = vectorAt(workers,i);
@@ -31,20 +31,17 @@ void signal_worker_processes(vector* workers,int signo){
         }
         
         // worker正在退出,那么就不需要再次发送quit信号(gracefully shutdown)
-        if (worker->exiting && signo == SIGQUIT)
-        {
+        if (worker->exiting && signo == SIGQUIT){
             continue;
         }
         
         if (kill(worker->pid, signo) == -1) {
-            
             plog("kill(%d, %d) failed", worker->pid, signo);
-            
             //没有找到这样的process group或者process
             if (errno == ESRCH) {
                 worker->exited = 1;
                 worker->exiting = 0;
-                p_reap = 1;//用来关闭对应channel(暂时没有实现)
+                p_reap = 1;
             }
             
             continue;
@@ -62,48 +59,43 @@ void worker_process_exit(vector* workers)
     exit(0);
 }
 
+
+
 // the worker will run this cycle
 void worker_cycle_process()
 {
     //ABORT_ON(process_status != WORKER, "this function can only run in worker!!!");
-    static int times = 0;
     worker_process_init();
     
-    while(1)
-    {
-        if(p_exiting)
-        {
-            // 当前worker正在退出,并且不是那种直接退出的逻辑
-            // 如果发现那种idle的链接,就需要清理并且expired
-            
-            worker_process_exit(&server_cfg.workers);//直接退出
-            // 正常情况下需要判断是否还有事件(链接)需要处理
+    while(1){
+        if(p_exiting){
+            /* 代表正在退出(shutting down)
+               这里需要处理所有空的链接,因为空的链接上面还有防止链接存活时间过长的定时器
+               确保剩下的都是正在处理的事情
+             */
+            clear_idle_connections();
+            if(event_timer_rbtree.root == event_timer_rbtree.sentinel){
+                // 如果红黑树里面已经没有任何监听的事件了,那么直接结束
+                worker_process_exit(&server_cfg.workers);// 直接退出
+            }
         }
         
-        process_events_and_timer();//处理各种链接的处理
-        times++;
-        if(times % 1000 == 0){
-            plog_debug("%d : connection number : %d",times,connection_pool.cpool.used);
-        }
-        //test_connection();
-
-        if(p_terminate)
-        {
+        process_events_and_timer();//处理所有的事件
+        /* 收到了SIGINT的信号 */
+        if(p_terminate){
             worker_process_exit(&server_cfg.workers);//直接退出
         }
         
-        if (p_quit)
-        {
-            p_quit = 0;
+        /* 收到了SIGQUIT的信号,不会马上关闭所有的链接,但是需要设置一个timer,到时间了就强制关闭
+         * 取消监听的链接,保证不会再接受新的信号
+         */
+        if (p_quit){
             plog("gracefully shutting down");
-            //ngx_setproctitle("worker process is shutting down");
-            
-            if (!p_exiting)
-            {
+            p_quit = 0;
+            if (!p_exiting){
                 p_exiting = 1;
-                //ngx_set_shutdown_timer(cycle);
-                //ngx_close_listening_sockets(cycle);
-                //ngx_close_idle_connections(cycle);
+                clear_idle_connections();
+                http_close_connection(listen_connection);// todo: 改成监听多个端口
             }
         }
     }
@@ -146,8 +138,6 @@ void process_events_and_timer()
     if (delta) {
         event_expire_timers();
     }
-    //plog("current msec :%d",current_msec);
-    // process timers
 }
 
 // 利用时间数组来更新缓存时间

@@ -8,6 +8,7 @@
 
 /* vector is used as array */
 #include "vector.h"
+#include <string.h>
 #include "commonUtil.h"
 int vectorInit(vector * vec,int capacity, int unit_size)
 {
@@ -15,6 +16,7 @@ int vectorInit(vector * vec,int capacity, int unit_size)
     
     if(capacity > 0){
         vec->data = (void *)malloc(capacity * unit_size);
+        memzero(vec->data,capacity * unit_size);
         if(vec->data == NULL) return ERROR;
     }
     else{

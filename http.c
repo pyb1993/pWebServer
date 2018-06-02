@@ -105,7 +105,8 @@ void http_clear_request(http_request_t* r)
     r->pool = pool;
     r->recv_buffer = rb;
     r->send_buffer = sb;
- 
+    c->is_idle = true; //设置处于idle状态
+
     // 如果是upstream 链接,且链接成功,那么要调用这个函数
     if(r->cur_upstream){
         free_upstream(r->cur_upstream);
@@ -122,10 +123,10 @@ void http_response_done(http_request_t* r){
         connection_t* c = r->connection;
         plog("reuse the connection:(%d)",c->fd);
         http_clear_request(r);// 清理请求的状态,等待复用
-        del_event(c->wev,WRITE_EVENT,0);//已经写完了(自动清理定时器)
-        add_event(c->rev,READ_EVENT,0);//已经写完了,回复到读取的状态
-        c->rev->handler = ngx_http_process_request_line;//重新恢复到处理请求行的状态
-        event_add_timer(c->rev, server_cfg.keep_alive_timeout);
+        del_event(&c->wev,WRITE_EVENT,0);//已经写完了(自动清理定时器)
+        add_event(&c->rev,READ_EVENT,0);//已经写完了,回复到读取的状态
+        c->rev.handler = ngx_http_process_request_line;//重新恢复到处理请求行的状态
+        event_add_timer(&c->rev, server_cfg.keep_alive_timeout);
     }
     else{
         http_close_request(r);
@@ -167,8 +168,8 @@ void handle_response(event_t* wev)
         {
             //注意response_done的用途,如果已经出错,那么就不执行发送file的操作
             plog("send file (fd:%d)",c->fd);
-            c->wev->handler = handle_response_file;
-            handle_response_file(c->wev);
+            c->wev.handler = handle_response_file;
+            handle_response_file(&c->wev);
             return;
         }else{
             // 不需要发送 file,那么直接结束
@@ -320,7 +321,7 @@ void request_handle_body(event_t * rev)
             if(req->upstream->is_connected){
                 // case2
                 del_event(rev,READ_EVENT,0);
-                add_event(req->upstream->wev,WRITE_EVENT,0);//因为存在body,所以默认是需要后台转发。所以从第一次接受到数据开始,就需要监听front->backend
+                add_event(&req->upstream->wev,WRITE_EVENT,0);//因为存在body,所以默认是需要后台转发。所以从第一次接受到数据开始,就需要监听front->backend
             }else{
                 // case3 接受完成,但是还没有链接好后端服务器
                 req->state = BODY_RECV_BEGIN;
@@ -330,24 +331,24 @@ void request_handle_body(event_t * rev)
             del_event(rev,READ_EVENT,0);
             if(req->upstream == NULL){
                 //case1
-                c->wev->handler = handle_response;
+                c->wev.handler = handle_response;
                 
                 // 如果已经在解析的时候就出错了,那么response_done会被设置为true
                 if (req->response_done){
                     return;
                 }
                 
-                add_event(c->wev,WRITE_EVENT,0);
+                add_event(&c->wev,WRITE_EVENT,0);
                 req->status = 200;
                 construct_response(c->data);
-                event_add_timer(c->wev, server_cfg.post_accept_timeout);// todo: fix me : time out
+                event_add_timer(&c->wev, server_cfg.post_accept_timeout);// todo: fix me : time out
                 return;
             }else if(req->upstream->is_connected){
                 // case2
                 b->end = b->begin;
                 b->begin = b->data;
-                add_event(req->upstream->wev,WRITE_EVENT,0);//当request处理完成了以后,接下来需要监听front->backend(需要转发最后一次的内容)
-                event_add_timer(req->upstream->wev, server_cfg.post_accept_timeout);// todo fix me, time out
+                add_event(&req->upstream->wev,WRITE_EVENT,0);//当request处理完成了以后,接下来需要监听front->backend(需要转发最后一次的内容)
+                event_add_timer(&req->upstream->wev, server_cfg.post_accept_timeout);// todo fix me, time out
             }else{
                 // case3 等待后台通信成功/超时/失败
                 b->end = b->begin;
@@ -770,17 +771,17 @@ void http_proxy_pass(event_t* wev){
     int err = buffer_send(rb, upstream->fd);
     if (err == OK) {
         buffer_clear(rb);// 本次所有接受到的data已经转发完成了,移除对write事件的监听
-        add_event(c->rev,READ_EVENT,0);//监视client->server,这里有可能出现client断开链接
-        del_event(upstream->wev,WRITE_EVENT,0);
+        add_event(&c->rev,READ_EVENT,0);//监视client->server,这里有可能出现client断开链接
+        del_event(&upstream->wev,WRITE_EVENT,0);
     } else if (err == ERROR) {
         // 对方已经关闭了链接,所以我们设置对客户端的回应信息
         plog("err on upstream %d",errno);
         construct_err(r, r->connection, 503);
     }
     
-    if(!upstream->rev->timer_set){
+    if(!upstream->rev.timer_set){
         // 防止bakcend服务器超时
-        event_add_timer(upstream->rev, server_cfg.upstream_timeout);
+        event_add_timer(&upstream->rev, server_cfg.upstream_timeout);
     }
 }
 /* 从上游接受到的数据
@@ -806,12 +807,12 @@ void http_recv_upstream(event_t* rev){
     plog("connection: %d: recv from upstream(%d)",r->connection->fd,r->upstream->fd);
     
     int err = buffer_recv(r->send_buffer, upstream->fd);
-    if(!r->connection->wev->handler){
-        r->connection->wev->handler = handle_response;
+    if(!r->connection->wev.handler){
+        r->connection->wev.handler = handle_response;
     }
     
     // 获取了数据,所以需要转发
-    add_event(r->connection->wev,WRITE_EVENT,0);
+    add_event(&r->connection->wev,WRITE_EVENT,0);
     if(err == OK){
         // 上游关闭了链接
         // 关闭upstream的链接,但是不关闭请求。因为connection还需要回复client
@@ -899,7 +900,7 @@ void process_connection_result_of_upstream(event_t* wev){
         
         // case1 || case2
         // 这里对fd/事件/timer的处理思路和try_connect中一致
-        del_event(r->upstream->wev,WRITE_EVENT,0);
+        del_event(&r->upstream->wev,WRITE_EVENT,0);
         //close(fd);
         plog("connect to upstream(%s:%d) failed,errno:%d",us->location->host.c,us->location->port,err);
         try_connect_upstream(r,NULL);
