@@ -147,16 +147,12 @@ void signal_init()
 
 /*各个模块实现自己的module_init函数*/
 void module_init(){
-
     event_module.module_init();
     upstream_module.module_init();
 }
 
-
 int main(int argc, const char * argv[])
 {
-    //test();
-    //exit(0);
     config_load();
     listen_fd = startUp(server_cfg.port);
     set_nonblocking(listen_fd);
@@ -164,6 +160,7 @@ int main(int argc, const char * argv[])
     if(server_cfg.daemon){
        daemon(1,0);
     }
+    
     signal_init();
     module_init();
     plog("master %d run\n",getpid());
